@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { BLOCK_FOOTPRINT } from '../../core/layout';
 import type { SwatchToken } from '../../core/model';
 import { BlockMesh } from '../BlockMesh';
-import { PAD_OFFSET, PLOT_TOP_Y, padGeometry, slabEdgeGeometry, slabGeometry } from '../Foundation';
+import { PAD_OFFSET, PLOT_TOP_Y, SLAB_SIZE, SLAB_THICKNESS, padGeometry, slabEdgeGeometry, slabGeometry } from '../Foundation';
 import { colorOf, materials } from '../materials';
 
 // The temporary pieces a build animates (spec 9.4): the survey tripod and
@@ -17,6 +17,8 @@ export const BEAM_SIZE = 0.1;
 const MAX_RINGS = 96;
 const PANEL_POOL = 3;
 const OUTLINE_POINTS = 96;
+/** A stacked block's poured floor: as wide as the block and this thick. */
+const FLOOR_THICKNESS = 0.05;
 
 const columnGeometry = new THREE.BoxGeometry(COLUMN_SIZE, 1, COLUMN_SIZE).translate(0, 0.5, 0);
 const beamGeometry = new THREE.BoxGeometry(1, BEAM_SIZE, BEAM_SIZE);
@@ -24,6 +26,8 @@ const panelGeometry = new THREE.BoxGeometry(BLOCK_FOOTPRINT, 1, 0.1);
 const legGeometry = new THREE.CylinderGeometry(0.012, 0.012, 0.44, 5).translate(0, -0.22, 0);
 const instrumentGeometry = new THREE.BoxGeometry(0.09, 0.07, 0.12);
 const HIDDEN = new THREE.Matrix4().makeScale(0, 0, 0);
+/** Stands in for an unbounded clipping height; shader uniforms should not carry Infinity. */
+const FAR = 1e5;
 
 export class SiteProps {
   readonly root = new THREE.Group();
@@ -36,8 +40,10 @@ export class SiteProps {
   readonly panels: THREE.Mesh[] = [];
   /** The facade that rises behind the scaffold. */
   readonly cladding: BlockMesh;
-  /** World plane that keeps everything below its height (y <= constant). */
-  readonly clip = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0);
+  /** Keeps the facade copy below a height (y <= constant). */
+  readonly clipTop = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0);
+  /** Keeps the facade copy above a height (y >= -constant), for work at a block's base. */
+  readonly clipBase = new THREE.Plane(new THREE.Vector3(0, 1, 0), FAR);
   private readonly claddingBody: THREE.MeshStandardMaterial;
   /** The finished block for reduced motion, which fades in instead (spec 9.7). */
   private readonly fadeBody: THREE.MeshStandardMaterial;
@@ -116,12 +122,12 @@ export class SiteProps {
     }
 
     this.claddingBody = materials.blockBody('navy').clone();
-    this.claddingBody.clippingPlanes = [this.clip];
+    this.claddingBody.clippingPlanes = [this.clipTop, this.clipBase];
     this.claddingBody.clipShadows = true;
     // Inner faces too, so the cut reads as a shell rather than a see-through box.
     this.claddingBody.side = THREE.DoubleSide;
     this.claddingEdges = materials.blockEdges('navy').clone();
-    this.claddingEdges.clippingPlanes = [this.clip];
+    this.claddingEdges.clippingPlanes = [this.clipTop, this.clipBase];
     this.fadeBody = materials.blockBody('navy').clone();
     this.fadeBody.transparent = true;
     this.fadeCap = materials.blockCap('navy').clone();
@@ -155,7 +161,15 @@ export class SiteProps {
     this.cladding.setBaseY(baseY);
     this.cladding.setHeight(height);
     this.cladding.cap.visible = false;
-    this.clip.constant = baseY;
+    this.cladding.cap.position.x = 0;
+    this.cladding.cap.position.z = 0;
+    this.clipTop.constant = baseY;
+    this.clipBase.constant = FAR;
+  }
+
+  /** Puts the survey outline at a height: the plot for a first build, a stacked block's base otherwise. */
+  setOutlineY(y: number): void {
+    this.outline.position.y = y;
   }
 
   /** Draws the footprint outline from 0 (none) to 1 (closed square). */
@@ -179,7 +193,17 @@ export class SiteProps {
   /** The slab from 0 (flat) to 1 (full depth); may overshoot for a wobble. */
   setSlab(scale: number): void {
     this.slab.visible = scale > 0;
+    this.slab.position.y = 0;
     this.slab.scale.set(1, Math.max(0.001, scale), 1);
+  }
+
+  /** A stacked block's floor, poured on the roof below it at `y`, from 0 (none) to 1. */
+  setFloor(y: number, rise: number): void {
+    const span = (SLAB_SIZE - 0.2) / SLAB_SIZE;
+    const depth = (FLOOR_THICKNESS / SLAB_THICKNESS) * Math.max(0.001, rise);
+    this.slab.visible = rise > 0;
+    this.slab.position.y = y + SLAB_THICKNESS * depth;
+    this.slab.scale.set(span, depth, span);
   }
 
   /** Corner columns from `baseY` up to `topY`. */
@@ -239,10 +263,16 @@ export class SiteProps {
     this.panels[index % PANEL_POOL]!.visible = false;
   }
 
-  /** Raises the facade's clipping plane to a world height. */
+  /** Shows the facade copy up to a world height; Infinity shows all of it. */
   setReveal(y: number): void {
     this.cladding.root.visible = true;
-    this.clip.constant = y;
+    this.clipTop.constant = Math.min(y, FAR);
+  }
+
+  /** Shows the facade copy from a world height up; -Infinity shows all of it. */
+  setRevealFrom(y: number): void {
+    this.cladding.root.visible = true;
+    this.clipBase.constant = -Math.max(y, -FAR);
   }
 
   setEdgeOpacity(opacity: number): void {
@@ -261,6 +291,7 @@ export class SiteProps {
     this.tripod.visible = false;
     this.tripod.scale.setScalar(1);
     this.setOutline(0);
+    this.setOutlineY(PLOT_TOP_Y + 0.012);
     this.setPads([0, 0, 0, 0]);
     this.setSlab(0);
     for (const column of this.columns) column.visible = false;

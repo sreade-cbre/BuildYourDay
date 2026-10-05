@@ -20,6 +20,9 @@ export interface Step {
   onComplete?: () => void;
 }
 
+/** Seconds of floating point slack when deciding a step has reached its end. */
+const END_EPSILON = 1e-9;
+
 interface StepState {
   step: Step;
   /** Last raw progress applied, or null before the step was reached. */
@@ -163,7 +166,9 @@ export class Timeline {
         state.started = true;
         step.onStart?.();
       }
-      const raw = step.duration <= 0 ? 1 : Math.min(1, (this.time - step.at) / step.duration);
+      // A step whose end rounds a hair past the timeline's end still completes.
+      const ended = this.time >= step.at + step.duration - END_EPSILON;
+      const raw = step.duration <= 0 || ended ? 1 : Math.min(1, (this.time - step.at) / step.duration);
       if (raw !== state.last) {
         state.last = raw;
         step.update(raw >= 1 ? 1 : (step.ease ?? easeInOutCubic)(raw));

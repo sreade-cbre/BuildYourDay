@@ -366,3 +366,123 @@ what was decided and why. Section numbers refer to `TIME_TOWER_SPEC.md`.
     compile). With the CPU slowed four times: 95th percentile 8.0 ms, worst
     13.9 ms. The GPU could not be slowed, so the target hardware itself is
     untested.
+
+## M4: Stacked builds and the other jobs
+
+### Fixed times and the jobs
+
+1. **Nothing settles after a deletion.** M4's acceptance has the blocks above
+   a deleted block settle into place. Under M2 decision 1 a deletion leaves
+   free time and the blocks above keep their times, so they are already in
+   place and stay put. Settle plays only when a time really changes: Move
+   earlier and Move later, and moves by drag or by the inspector.
+2. **How moves animate.** A move that lands on or beside where the block was
+   slides there (settle); a longer one is carried by the crane (relocate),
+   as spec 12.4 says. In a swap from Move earlier or Move later, the block
+   that jumps its neighbor is relocated and the neighbor settles while it is
+   out of the way, so the two never pass through each other. When both moves
+   are the same length, the selected block is the one relocated.
+3. **Relocate goes around the tower, not up through it.** Spec 11.3 lifts the
+   block straight up, but blocks standing above it would be in the way and
+   the crane's cable would pass through them. The block slides out of the
+   tower behind its left side, where the jib reaches and the default camera
+   can see it, rides to its new height there, and slides back in. Its label
+   steps aside while it is outside, so it never crosses the labels it passes.
+4. **Previews are ghosts.** During a drag or an unsaved inspector time edit,
+   the block now stays where it is and a blue ghost shows the new times. A
+   move also shows an outline where the block will land when that is not
+   under the pointer. M2 drew the block at its new times instead, but then
+   every animation would begin with the block jumping back. This changes
+   only how M2 decision 1 is drawn, not the fixed times rule.
+5. **Bulk changes stay instant.** Clear this day, undoing a cleared day, the
+   sample day, copying a day, imports, and settings show at once. The spec
+   animates single edits; dozens of demolitions in a row would only be in the
+   way. The rapid builds for the sample day and copy day remain in M5.
+6. **Undo speed is absolute.** Spec 12.6's "fast build at speed 3" uses the
+   animation speed setting's scale, so an undone deletion rebuilds at 3x
+   whatever the setting is.
+
+### Stacked builds
+
+7. **First means nothing standing.** A build is a first build when no other
+   block stands on the day as the build is queued; blocks still waiting for
+   their own builds do not count. The first build takes the site, so the plot
+   keeps its grass until the bulldozer clears it.
+8. **A stacked block's foundation is a poured floor.** Phase 2 describes only
+   a first block's foundation. For a stacked block the mixer backs in with
+   its drum turning, a thin floor rises on the roof below, and the two
+   workers who rode the hoist up screed it. The excavator stays parked, and
+   the mixer leaves before the frame so the side lane is clear.
+9. **Workers ride the hoist both ways.** In phase 1 two workers carry planks
+   to the hoist and ride it up, as specified. At the strike, the scaffold
+   crew walks the planks to the hoist and rides it down, since a block high
+   on the tower has no other way down. Builds near the ground step down as
+   in M3.
+10. **Side delivery under other blocks.** When blocks stand over the slot,
+    for example a block added in a gap, nothing can drop in from overhead
+    without passing through them. The crane lowers beams and the roof cap
+    beside the tower on the depot side and slides them in at their own
+    height, panels hang outside the scaffold, clear of the roofs above, and
+    the scaffold strikes before the cap slides in.
+11. **Rail and hoist placement.** The guard rail stands right outside the roof
+    cap's overhang on the roof below the new block. The hoist stands at the
+    tower's rear left edge (spec 10.3), outside the scaffold line.
+
+### Extend, shrink, and demolish
+
+12. **Extend timing.** Spec 11.2 gives shrink a length (0.9 s plus 0.2 s a
+    floor, at most 2 s) but not extend. An extend's frame and cladding scale
+    like a build's, with 0.6 s minimums, plus taking the roof cap off and
+    putting it back at the roof: about 2.7 s for 15 minutes and 4 s for an
+    hour at the roof, less at the base. The crane folds away and the mast
+    settles inside that time, so a shrink keeps exactly the spec's length.
+13. **Where the cap waits.** During an extend the crane needs its hook for
+    the new beams, so it sets the roof cap on the depot stack and brings it
+    back at the end. During a shrink there is nothing else to lift, so it
+    holds the cap on the hook. With blocks standing above, the cap slides
+    out to the side first.
+14. **No panels in an extend.** The crane's lifts go to the beams and the
+    cap; the facade still reveals floor by floor with dust at each floor.
+15. **Demolition timing.** The ball lands at 0.4 s and the rubble is down
+    and gone by 1.1 s, as specified. The dump truck needs until 1.45 s to
+    drive off with its load.
+16. **The ball swings in from the front.** The crane hangs the ball in front
+    of the block, outside the tower, so its cable stays clear of any blocks
+    above, and swings it into the upper third of the front face.
+17. **Rubble lands on what is below.** Cubes come to rest on the highest
+    roof below the block, or on the slab; cubes thrown past the tower's edge
+    land on the plot. With a block standing right above, no cube hops up
+    into it.
+18. **The last block clears the site.** Demolishing a day's last block ends
+    with the slab sinking and the grass growing back, mirroring site prep,
+    rather than switching to grass at once.
+
+### Reduced motion
+
+19. **Every job has a short version.** Builds fade in and demolitions fade
+    out (spec 9.7). Settles slide linearly for 0.25 s, and extends and
+    shrinks change size the same way. A relocated block fades out and back
+    in at its new time, since sliding there could cut through the blocks in
+    between.
+
+### Under the hood
+
+20. **Claims.** Each job claims the blocks it touches when it is queued, in
+    queue order. The first claim decides what a block shows, hidden or
+    posed, so a queued job never shows its final state early, and a block
+    passes from one job to the next without a flash. Gap outlines in a
+    job's ranges stay hidden until it is done. This is how spec 19's rule,
+    that only the Director moves a block during a job, is kept.
+21. **A rounding bug in the M3 timeline.** A step ending exactly at the
+    timeline's end could reach 0.999999999999999 progress and never
+    complete, which left its job running forever. Steps now complete within
+    a nanosecond of their end; tests/timeline.test.ts covers it.
+22. **The mast settles when the site is quiet.** M3 parked the crane at the
+    last tower height it knew, which was stale after a build, so the jib sat
+    level with the new roof. Jobs now tween the mast, and once everything is
+    idle it stands 3 units over the tower top (spec 10.4).
+23. **Measured frame time.** On an Apple M1 Pro in headless Chrome at
+    1920 × 1080, with the GPU finishing each frame: stacked build 8.8 ms at
+    worst (95th percentile 4.7 ms), a 384 cube demolition 5.9 ms, extend
+    3.9 ms, relocate 2.7 ms. With the CPU slowed four times, the worst frame
+    was 10.9 ms. The 2020 laptop target itself is untested.

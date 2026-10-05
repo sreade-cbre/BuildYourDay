@@ -53,6 +53,16 @@ describe('Director', () => {
     expect(log).toContain('b:end');
   });
 
+  it('plays a job with its own speed instead of the setting, as undo does', () => {
+    const log: string[] = [];
+    const director = new Director(() => 0.5);
+    director.enqueue({ ...makeJob('undo', 3, log), speed: 3 });
+    run(director, 0.95);
+    expect(log).not.toContain('undo:end');
+    run(director, 0.1);
+    expect(log).toContain('undo:end');
+  });
+
   it('fast-forwards the running job when another arrives, then plays the next', () => {
     const log: string[] = [];
     const director = new Director(() => 1);

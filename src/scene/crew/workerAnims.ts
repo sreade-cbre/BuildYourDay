@@ -5,7 +5,7 @@ import { easeInOutCubic, easeOutCubic } from '../../anim/easing';
 // limb forward, positive back. A pose is flat numbers so two poses blend by
 // interpolating field by field.
 
-export type WorkerAnim = 'idle' | 'walk' | 'hammer' | 'screed' | 'survey';
+export type WorkerAnim = 'idle' | 'walk' | 'hammer' | 'screed' | 'survey' | 'carry' | 'ride';
 
 export interface Pose {
   bob: number;
@@ -32,6 +32,9 @@ export const CYCLE: Record<WorkerAnim, number> = {
   hammer: 0.6,
   screed: 1.2,
   survey: 3.0,
+  carry: 0.5,
+  // A still pose; the cycle only paces the blend.
+  ride: 1.0,
 };
 
 const deg = (d: number) => (d * Math.PI) / 180;
@@ -127,7 +130,17 @@ function survey(p: number): Pose {
   };
 }
 
-const POSES: Record<WorkerAnim, (p: number) => Pose> = { idle, walk, hammer, screed, survey };
+/** The walk cycle with both arms forward at -60 degrees, holding a plank. */
+function carry(p: number): Pose {
+  return { ...walk(p), shoulderL: deg(-60), shoulderR: deg(-60), elbowL: deg(-25), elbowR: deg(-25) };
+}
+
+/** Standing still on the hoist platform, one hand on the rail. */
+function ride(): Pose {
+  return { ...REST, shoulderL: deg(-25), shoulderOutL: deg(35), elbowL: deg(-35), elbowR: deg(-12) };
+}
+
+const POSES: Record<WorkerAnim, (p: number) => Pose> = { idle, walk, hammer, screed, survey, carry, ride };
 
 /** The pose for an animation at a phase; any phase wraps into [0, 1). */
 export function poseFor(anim: WorkerAnim, phase: number): Pose {

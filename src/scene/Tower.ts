@@ -16,16 +16,17 @@ import { BlockMesh } from './BlockMesh';
 import { Foundation } from './Foundation';
 import { GapMesh } from './GapMesh';
 import type { Ground } from './Ground';
-import type { Holds } from './holds';
+import type { BlockPose, Holds } from './holds';
 import { Label, type LabelText } from './Label';
 import { DIMMED_OPACITY, materials } from './materials';
 import type { LabelSpace } from './SceneRoot';
 
 // Owns the meshes for the viewed day and reconciles them against the store by
 // block id: adds what is missing, removes what is orphaned, updates what
-// changed (spec section 19). Reads the store, never writes to it. While a drag
-// or an unsaved inspector edit is in progress, a preview overrides block times
-// so the tower shows the result before anything is committed.
+// changed (spec section 19). Reads the store, never writes to it. Blocks a job
+// has claimed show as the job says (see holds.ts). While a drag or an unsaved
+// inspector edit is in progress, a ghost shows the new times and the block
+// stays put, so the job that follows starts from where the block stands.
 
 /** Gap between a block's right face and its label (spec section 8.5). */
 const LABEL_OFFSET = 0.4;
@@ -50,6 +51,7 @@ const outlineGeometry = new THREE.EdgesGeometry(
   new THREE.BoxGeometry(BLOCK_FOOTPRINT + OUTLINE_GROWTH, 1, BLOCK_FOOTPRINT + OUTLINE_GROWTH).translate(0, 0.5, 0),
 );
 const ghostGeometry = new THREE.BoxGeometry(BLOCK_FOOTPRINT + 0.04, 1, BLOCK_FOOTPRINT + 0.04).translate(0, 0.5, 0);
+const landingGeometry = new THREE.EdgesGeometry(ghostGeometry);
 
 /** Interaction state the tower draws: selection, hover, and legend highlight. */
 export interface TowerDecor {
@@ -61,10 +63,10 @@ export interface TowerDecor {
 
 /** Temporary state shown before it is committed. */
 export interface TowerPreview {
-  /** Times that replace the stored ones, by block id. */
-  times?: ReadonlyMap<BlockId, TimeRange>;
-  /** A translucent box: the pointer during a move, or a new block draft. */
+  /** A translucent box: new times for a block, the pointer during a move, or a new block draft. */
   ghost?: TimeRange | null;
+  /** An outline where a moved block will land, when that is not under the pointer. */
+  landing?: TimeRange | null;
 }
 
 /** What a pointer ray hit, in tower terms. */
@@ -76,6 +78,9 @@ interface BlockView {
   block: Block;
   mesh: BlockMesh;
   label: Label;
+  /** Where the block stands when no job has claimed it. */
+  home: BlockPose;
+  dimmed: boolean;
   /** Distance from the block's right face to the label's left edge. */
   labelOffset: number;
   leader: boolean;
@@ -106,6 +111,7 @@ export class Tower {
   private readonly leaders: THREE.LineSegments;
   private readonly outline: THREE.LineSegments;
   private readonly ghost: THREE.Mesh;
+  private readonly landing: THREE.LineSegments;
   private readonly right = new THREE.Vector3(1, 0, 0);
   private labelSpace: LabelSpace = { unitsPerPixel: 0.04, budget: Infinity };
   private labelMode: LabelMode = 'always';
@@ -137,10 +143,14 @@ export class Tower {
     this.ghost.visible = false;
     this.ghost.renderOrder = 5;
 
+    this.landing = new THREE.LineSegments(landingGeometry, materials.selection());
+    this.landing.name = 'landing';
+    this.landing.visible = false;
+
     this.keeper.setText({ title: ' ', detail: ' ' });
     this.keeper.sprite.visible = false;
 
-    this.root.add(this.leaders, this.outline, this.ghost, this.keeper.sprite);
+    this.root.add(this.leaders, this.outline, this.ghost, this.landing, this.keeper.sprite);
     this.unsubscribe = store.subscribe((event) => this.onStoreEvent(event));
     this.sync();
   }
@@ -165,32 +175,23 @@ export class Tower {
     return this.topId;
   }
 
-  /** World height of the tower's highest roof, or 0 for an empty day. */
+  /** World height of the highest roof in the data, or 0 for an empty day. Jobs in progress do not change it. */
   get topY(): number {
     return this.topYValue;
   }
 
-  /** Fades a held block's label, for a job's last moments (spec 9.4 phase 7). */
-  setHeldLabelOpacity(id: BlockId, opacity: number): void {
-    this.holds.setLabelOpacity(id, opacity);
-    this.views.get(id)?.label.setOpacity(opacity);
-    this.onChange?.();
-  }
-
-  /** Blocks for the viewed day with any preview times applied. */
-  private effectiveBlocks(): Block[] {
-    const times = this.preview?.times;
-    return this.store.blocks.map((b) => {
-      const override = times?.get(b.id);
-      return override ? { ...b, start: override.start, end: override.end } : b;
-    });
+  /** Where the tower draws a time range: its base height and height, clipped to the window. */
+  poseFor(range: TimeRange): BlockPose {
+    const settings = this.store.settings;
+    const span = this.renderSpan(range);
+    return { baseY: minutesToY(span.start, settings), height: spanHeight(span.end - span.start), x: 0, z: 0 };
   }
 
   /** Brings every mesh in line with the store's viewed day. */
   sync(): void {
     const settings = this.store.settings;
     this.labelMode = settings.labelMode;
-    const blocks = this.effectiveBlocks();
+    const blocks = this.store.blocks;
     const live = new Set<BlockId>();
     const { selectedId, hoveredId, highlightedCategory } = this.decor;
     let topEnd = -Infinity;
@@ -206,34 +207,28 @@ export class Tower {
         label.sprite.userData.blockId = block.id;
         label.sprite.userData.label = true;
         this.root.add(mesh.root, label.sprite);
-        view = { block, mesh, label, labelOffset: LABEL_OFFSET, leader: false };
+        view = { block, mesh, label, home: this.poseFor(block), dimmed: false, labelOffset: LABEL_OFFSET, leader: false };
         this.views.set(block.id, view);
       }
       view.block = block;
 
       const inside = isInWindow(block, settings);
-      const span = this.renderSpan(block);
-      view.mesh.setBaseY(minutesToY(span.start, settings));
-      view.mesh.setHeight(spanHeight(span.end - span.start));
+      view.home = this.poseFor(block);
       // A band for a block wholly outside the window sits slightly proud of the tower.
       const band = !clipToWindow(block, settings);
       view.mesh.root.scale.set(band ? 1.02 : 1, 1, band ? 1.02 : 1);
 
       const category = this.store.categoryFor(block);
-      const dimmed = highlightedCategory !== null && category.id !== highlightedCategory;
-      const held = this.holds.isHeld(block.id);
-      view.mesh.setAppearance({ token: category.color, dimmed, hovered: hoveredId === block.id, hatched: !inside });
-      // A block under construction shows as the job's copy, not this mesh.
-      view.mesh.root.visible = !held;
+      view.dimmed = highlightedCategory !== null && category.id !== highlightedCategory;
+      view.mesh.setAppearance({ token: category.color, dimmed: view.dimmed, hovered: hoveredId === block.id, hatched: !inside });
       view.label.setText(this.labelText(block, inside));
-      view.label.setOpacity(held ? this.holds.labelOpacity(block.id) : dimmed ? DIMMED_OPACITY : 1);
       view.label.sprite.visible = this.labelMode === 'always' || block.id === hoveredId || block.id === selectedId;
 
       if (inside && block.end > topEnd) {
         topEnd = block.end;
         this.topId = block.id;
       }
-      this.topYValue = Math.max(this.topYValue, view.mesh.baseY + view.mesh.height);
+      this.topYValue = Math.max(this.topYValue, view.home.baseY + view.home.height);
     }
 
     for (const [id, view] of this.views) {
@@ -243,19 +238,45 @@ export class Tower {
       this.views.delete(id);
     }
 
+    this.applyClaims();
     this.syncGaps(blocks);
-    this.syncOutline();
     this.syncGhost();
-    // During a first build the job owns the plot and foundation.
-    if (!this.holds.site) {
+    this.syncSite(blocks);
+    this.layoutLabels();
+    this.syncOutline();
+    this.onChange?.();
+  }
+
+  /**
+   * Shows each block as the first job that claimed it says: hidden while the
+   * job draws its own copy, or at the job's pose. Runs on every sync and
+   * before every frame, so a playing job only has to update its claim.
+   */
+  private applyClaims(): void {
+    for (const view of this.views.values()) {
+      const claim = this.holds.current(view.block.id);
+      const pose = claim?.pose ?? view.home;
+      view.mesh.setBaseY(pose.baseY);
+      view.mesh.setHeight(pose.height);
+      view.mesh.root.position.x = pose.x;
+      view.mesh.root.position.z = pose.z;
+      view.mesh.root.visible = claim?.pose !== null;
+      view.label.setOpacity(claim ? claim.labelOpacity : view.dimmed ? DIMMED_OPACITY : 1);
+    }
+  }
+
+  /** The plot and slab follow the data unless a job owns the site. */
+  private syncSite(blocks: readonly Block[]): void {
+    const mode = this.holds.siteMode;
+    if (mode === null) {
       const built = blocks.length > 0;
       this.foundation.root.visible = built;
       this.ground.setPrepared(built);
-    } else {
+    } else if (mode === 'build') {
+      // A first build draws its own slab and prepares the plot as it goes.
       this.foundation.root.visible = false;
     }
-    this.layoutLabels();
-    this.onChange?.();
+    // A frozen site stays as it is until the job lets go.
   }
 
   /** The part of a block to draw: its own span, clipped to the window if needed. */
@@ -292,25 +313,35 @@ export class Tower {
         return gap;
       });
     }
-    for (const gap of this.gaps) gap.setHovered(gap.range.start === this.decor.hoveredGapStart);
+    // Where a job is still working, the old layout shows until it is done.
+    const quiet = this.holds.quietRanges();
+    for (const gap of this.gaps) {
+      gap.setHovered(gap.range.start === this.decor.hoveredGapStart);
+      gap.root.visible = !quiet.some((q) => q.start < gap.range.end && gap.range.start < q.end);
+    }
   }
 
+  /** The selection outline follows its block, even while a job moves it. */
   private syncOutline(): void {
     const id = this.decor.selectedId;
-    const view = id && !this.holds.isHeld(id) ? this.views.get(id) : undefined;
+    const view = id && !this.holds.isHidden(id) ? this.views.get(id) : undefined;
     this.outline.visible = view !== undefined;
     if (!view) return;
-    this.outline.position.y = view.mesh.baseY - OUTLINE_GROWTH / 2;
-    this.outline.scale.set(view.mesh.root.scale.x, view.mesh.height + OUTLINE_GROWTH, view.mesh.root.scale.z);
+    const root = view.mesh.root;
+    this.outline.position.set(root.position.x, view.mesh.baseY - OUTLINE_GROWTH / 2, root.position.z);
+    this.outline.scale.set(root.scale.x, view.mesh.height + OUTLINE_GROWTH, root.scale.z);
   }
 
   private syncGhost(): void {
-    const range = this.preview?.ghost ?? null;
-    this.ghost.visible = range !== null;
-    if (!range) return;
     const settings = this.store.settings;
-    this.ghost.position.y = minutesToY(range.start, settings);
-    this.ghost.scale.y = spanHeight(range.end - range.start);
+    const place = (object: THREE.Object3D, range: TimeRange | null | undefined) => {
+      object.visible = !!range;
+      if (!range) return;
+      object.position.y = minutesToY(range.start, settings);
+      object.scale.y = spanHeight(range.end - range.start);
+    };
+    place(this.ghost, this.preview?.ghost);
+    place(this.landing, this.preview?.landing);
   }
 
   /** Sets the selection outline's opacity, for the pulse in spec 10.5. */
@@ -328,7 +359,7 @@ export class Tower {
       targets.push(view.mesh.body, view.mesh.cap);
       if (view.label.sprite.visible) targets.push(view.label.sprite);
     }
-    for (const gap of this.gaps) targets.push(gap.pickTarget);
+    for (const gap of this.gaps) if (gap.root.visible) targets.push(gap.pickTarget);
     return targets;
   }
 
@@ -441,6 +472,8 @@ export class Tower {
    * before each render so labels follow an orbiting camera.
    */
   updateForCamera(camera: THREE.Camera): void {
+    this.applyClaims();
+    this.syncOutline();
     this.right.setFromMatrixColumn(camera.matrixWorld, 0);
     this.right.y = 0;
     if (this.right.lengthSq() < 1e-8) this.right.set(1, 0, 0);

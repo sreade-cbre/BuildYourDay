@@ -91,3 +91,84 @@ export function panelLifts(floors: number, schedule: BuildSchedule): PanelLift[]
   }
   return lifts;
 }
+
+// M4 jobs
+
+/** Most rubble cubes one demolition draws (spec 11.1). */
+export const RUBBLE_MAX = 400;
+/** Rubble cube edge for blocks small enough to fill at this size. */
+export const RUBBLE_EDGE = 0.4;
+
+/**
+ * Rubble cubes that fill a block's volume (spec 11.1): 0.4 cubes where 400
+ * of them are enough, larger cubes for larger blocks.
+ */
+export function rubbleGrid(height: number, footprint = 4): { edge: number; across: number; up: number; count: number } {
+  let edge = RUBBLE_EDGE;
+  for (;;) {
+    const across = Math.max(1, Math.round(footprint / edge));
+    const up = Math.max(1, Math.round(height / edge));
+    const count = across * across * up;
+    if (count <= RUBBLE_MAX) return { edge, across, up, count };
+    edge *= 1.04;
+  }
+}
+
+/**
+ * Demolition beats in seconds (spec 11.1): rails up by 0.15, the ball lands
+ * at 0.4, rubble is down and gone by 1.1. The dump truck drives off after.
+ */
+export const DEMOLISH = {
+  rails: 0.15,
+  contact: 0.4,
+  fadeStart: 0.8,
+  rubbleEnd: 1.1,
+  truckGone: 1.45,
+} as const;
+
+/** Shrink length (spec 11.2): 0.9 s plus 0.2 s per removed floor, at most 2 s. */
+export function shrinkDuration(removedFloors: number): number {
+  return Math.min(2.0, 0.9 + 0.2 * Math.max(1, removedFloors));
+}
+
+/**
+ * Extend phases (spec 11.2) for floors of total height H added at the top or
+ * the base: the frame and cladding scale like a build's, with shorter
+ * minimums, and the roof cap comes off and goes back on only at the top.
+ */
+export function extendSchedule(addedHeight: number, top: boolean) {
+  const s = Math.sqrt(addedHeight / 3);
+  const d = {
+    capOff: top ? 0.5 : 0,
+    frame: Math.max(0.6, 1.2 * s),
+    cladding: Math.max(0.6, 1.3 * s),
+    roof: top ? 0.55 : 0,
+    strike: 0.35,
+    cleanup: 0.4,
+  };
+  const scaffold = 0.05;
+  const frame = Math.max(0.25, d.capOff);
+  const cladding = frame + d.frame;
+  const roof = cladding + d.cladding - 0.1;
+  const strike = top ? roof + d.roof - 0.15 : cladding + d.cladding;
+  const cleanup = strike + d.strike - 0.1;
+  return { d, at: { scaffold, frame, cladding, roof, strike, cleanup }, total: cleanup + d.cleanup };
+}
+
+/** Settle (spec 9.2): blocks slide to their new height. */
+export const SETTLE_SECONDS = 0.4;
+/** Under reduced motion every move is a plain slide of this length (spec 9.7). */
+export const CALM_SECONDS = 0.25;
+
+/**
+ * Relocate beats (spec 11.3): the block slides out of the tower to where the
+ * crane can hook it, travels to its new height outside the tower, and
+ * slides back in. Longer trips take a little longer.
+ */
+export function relocateSchedule(distance: number) {
+  const out = 0.3;
+  const travel = Math.min(0.9, 0.45 + 0.02 * distance);
+  const back = 0.35;
+  const at = { hook: 0, out: 0.1, travel: 0.1 + out, back: 0.1 + out + travel, park: 0.1 + out + travel + back };
+  return { out, travel, back, at, total: at.park + 0.3 };
+}

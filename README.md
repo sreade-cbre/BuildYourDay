@@ -13,7 +13,7 @@ time order, with free time shown as hollow wireframe. The full design lives in
 | M1 | Static tower: scene, sample day, labels, camera, totals | Done |
 | M2 | Editing, persistence, settings, list view, dark theme | Done |
 | M3 | First build animation | Done |
-| M4 | Stacked builds and the other jobs | Not started |
+| M4 | Stacked builds and the other jobs | Done |
 | M5 | Living tower: now ring, weathering, idle orbit | Not started |
 
 ## Requirements
@@ -51,23 +51,28 @@ and deleting a block leaves free time behind.
 
 - **Add a block** with Add block, the N key, a click on a gap (it prefills
   that free time, up to two hours), or a click on the plot or the top roof.
-- **Watch it build.** The first block on an empty day is built by a crew:
-  survey, site prep, foundation, frame, scaffold, cladding, roof, and cleanup,
-  about 6 seconds for an hour at speed 1. Skip in the status chip or Escape
-  finishes it at once, as do opening settings and changing days. Other new
-  blocks appear without animation until stacked builds arrive in M4. With
-  reduced motion, the block fades in instead.
+- **Watch it build.** Every new block is built by a crew: survey, site prep,
+  foundation, frame, scaffold, cladding, roof, and cleanup, about 6 seconds
+  for an hour at speed 1. The first block of a day clears and pours the site;
+  later ones get a guard rail and a hoist ride up instead. Every edit has its
+  own animation: a resize extends or shrinks the block, a move slides it or
+  has the crane carry it, and Demolish brings in the wrecking ball. Adding
+  more while one plays hurries it along. Skip in the status chip or Escape
+  finishes everything at once, as do opening settings and changing days. With
+  reduced motion, each change is a quarter second fade or slide.
 - **Select** a block by clicking it or its label. Click empty space or press
   Escape to deselect. Up and Down move the selection through the day.
 - **Resize** a selected block by dragging its roof or base, by Shift and the
   mouse wheel over it (one slot per notch), or with the times in the inspector.
+  While you drag, a blue ghost shows the new size.
 - **Move** a selected block by dragging its body. A blue ghost follows the
-  pointer and the block shows where it will land. Move earlier and Move later
-  in the inspector step one slot, swapping with a neighbor that touches.
+  pointer, and an outline marks where the block will land when that is
+  somewhere else. The block moves when you let go. Move earlier and Move
+  later in the inspector step one slot, swapping with a neighbor that touches.
 - **Rename and recategorize** in the inspector. Titles and times commit on
   Enter or when you leave the field.
 - **Demolish** with the inspector button or Delete. An Undo toast stays for
-  six seconds.
+  six seconds; Undo rebuilds the block at triple speed.
 - **Change days** with the arrows beside the date, the [ and ] keys, or
   Today.
 - **Highlight a category** by clicking it in the legend; click again or press
@@ -109,8 +114,8 @@ and Cancel puts everything back.
 | Slot | 5, 10, 15, or 30 minutes. New edits snap to it. |
 | Time format | 12h or 24h. |
 | Categories | Up to 9, each with a name and one of nine brand colors. Removing one moves its blocks to the first category. |
-| Animation speed | 0.5x to 3x for the build animation. At 2x a build takes half as long. |
-| Reduced motion | System, On, or Off. On replaces the build with a quarter second fade. |
+| Animation speed | 0.5x to 3x for every construction animation. At 2x a build takes half as long. An undone deletion always rebuilds at 3x. |
+| Reduced motion | System, On, or Off. On turns every construction animation into a quarter second fade or slide. |
 | Idle orbit | Slowly circles the tower when idle (arriving in M5). |
 | Labels | Always, or only on hover. |
 | Weather past blocks | Fades blocks that are done (arriving in M5). |
@@ -125,9 +130,10 @@ src/
   brand/tokens.ts   the only file allowed to contain hex colors
   core/             pure logic: model, time, layout, store, rng (no three, no DOM)
   scene/            three.js scene: SceneRoot, Ground, Tower, blocks, gaps, labels
-  scene/crew/       workers, machines, crane, scaffold, dust, and site props
+  scene/crew/       workers, machines, crane, hoist, scaffold, rubble, dust, and site props
   ui/               HTML overlay
-  anim/             Timeline, Director, easing, paths, and jobs (build timing in jobs/schedule.ts)
+  anim/             Timeline, Director, easing, paths, and the job planner (plan.ts)
+  anim/jobs/        build, extend, shrink, resize, demolish, relocate, settle, and their timing (schedule.ts)
 tests/              Vitest unit tests for core logic, animation timing, and brand rules
 ```
 

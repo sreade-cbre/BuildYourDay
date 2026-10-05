@@ -1,6 +1,12 @@
 import * as THREE from 'three';
-import { Director } from './anim/Director';
-import { buildJob, fadeInJob, instantJob, type JobScene } from './anim/jobs/build';
+import { Director, type Job } from './anim/Director';
+import { buildJob, fadeInJob } from './anim/jobs/build';
+import { demolishJob } from './anim/jobs/demolish';
+import { relocateJob } from './anim/jobs/relocate';
+import { resizeJob } from './anim/jobs/resize';
+import type { JobScene } from './anim/jobs/scene';
+import { settleJob } from './anim/jobs/settle';
+import { planJobs, type JobPlan } from './anim/plan';
 import { LIMITS, sampleBlocks } from './core/defaults';
 import { defaultNewRange, gapDraftRange, resizeLimits, totals, towerHeight } from './core/layout';
 import type { BlockId, CategoryId, Settings, TimeRange } from './core/model';
@@ -122,7 +128,7 @@ export class App {
     this.inspector = new Inspector(hosts.overlay, this.store, this.ui, {
       build: (draft) => this.build(draft),
       updateDraft: (draft) => this.ui.update({ inspector: { mode: 'new', draft } }),
-      previewTimes: (id, range) => this.scene?.tower.setPreview(range ? { times: new Map([[id, range]]) } : null),
+      previewTimes: (_id, range) => this.scene?.tower.setPreview(range ? { ghost: range } : null),
       commit: (id, patch) => this.commit(id, patch),
       nudge: (id, direction) => this.nudge(id, direction),
       demolish: (id) => this.demolish(id),
@@ -200,6 +206,8 @@ export class App {
         return tower!;
       },
       settings: () => this.store.settings,
+      blocks: () => this.store.blocks,
+      token: (block) => this.store.categoryFor(block).color,
       moreQueued: () => director.queued > 0,
       keepInFrame: (topY) => this.keepInFrame(topY),
       requestRender: () => root.requestRender(),
@@ -208,6 +216,13 @@ export class App {
     // already held when the Tower first draws it.
     this.store.subscribe((event) => this.planJobs(event, director, jobs));
     director.onChange(() => this.onDirectorChange());
+    // With the site quiet again, the crew goes home and the mast fits the tower.
+    director.onIdle(() => {
+      crew.setTowerTop(tower!.topY);
+      crew.park();
+      crew.settleMast();
+      root.requestRender();
+    });
     root.onShow(() => director.finishAll());
 
     tower = new Tower(this.store, ground, holds);
@@ -234,6 +249,7 @@ export class App {
     });
     crew.setTowerTop(tower.topY);
     crew.park();
+    crew.settleMast();
     root.warmUp();
     return { root, ground, tower, picker, crew, holds, director, jobs };
   }
@@ -241,31 +257,30 @@ export class App {
   // Animation jobs
 
   /**
-   * Turns store changes into jobs (spec 9.2 and 9.6). The first block added
-   * to an empty day gets the full build, or a fade under reduced motion.
-   * Anything that changes the scene underneath a job finishes it first.
+   * Turns store changes into jobs (spec 9.2 and 9.6); see plan.ts. Under
+   * reduced motion each job plays its short version (spec 9.7).
    */
   private planJobs(event: StoreEvent, director: Director, jobs: JobScene): void {
-    if (event.type !== 'blocks') {
-      director.finishAll();
-      return;
-    }
-    if (event.date !== this.store.viewedDate) return;
-    // Renaming leaves the build running; anything that moves or removes a block does not.
-    if (event.changes.some((c) => c.kind !== 'added' && c.kind !== 'retitled')) director.finishAll();
-    const added = event.changes.filter((c) => c.kind === 'added').map((c) => c.block);
-    if (added.length === 0) return;
-    for (const block of added) {
-      const first = this.store.blocks.length === added.length && !director.isBusy;
-      if (event.origin === 'user' && first) {
-        const token = this.store.categoryFor(block).color;
-        director.enqueue(this.reducedMotion() ? fadeInJob(jobs, block, token) : buildJob(jobs, block, token));
-      } else if (director.isBusy) {
-        // Wait in line so blocks appear in the order they were added.
-        director.enqueue(instantJob(jobs, block));
-      }
-    }
+    const plan = planJobs(event, this.store.viewedDate, this.ui.state.selectedId);
+    if (plan.finish) director.finishAll();
+    const calm = this.reducedMotion();
+    for (const job of plan.jobs) director.enqueue(this.makeJob(job, jobs, calm));
     if (director.isBusy) this.runDirector();
+  }
+
+  private makeJob(plan: JobPlan, scene: JobScene, calm: boolean): Job {
+    switch (plan.kind) {
+      case 'build':
+        return calm ? fadeInJob(scene, plan.block) : buildJob(scene, plan.block, plan.fast);
+      case 'demolish':
+        return demolishJob(scene, plan.block, calm);
+      case 'resize':
+        return resizeJob(scene, plan.move, calm);
+      case 'relocate':
+        return relocateJob(scene, plan.move, plan.settles, calm);
+      case 'settle':
+        return settleJob(scene, plan.moves, calm);
+    }
   }
 
   /** Ticks the Director every frame while it has work or dust is still settling. */
@@ -346,6 +361,7 @@ export class App {
     if (scene && !scene.director.isBusy) {
       scene.crew.setTowerTop(scene.tower.topY);
       scene.crew.park();
+      scene.crew.settleMast();
     }
     this.describeCanvas();
     this.updateSampleButton();

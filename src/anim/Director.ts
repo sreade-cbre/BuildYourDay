@@ -12,7 +12,7 @@ export interface Job {
   start(): Timeline;
   /** Runs once when the job ends, however it ended. Releases what the job held. */
   end(): void;
-  /** Extra speed on top of the animation speed setting, for example 3 for undo. */
+  /** Plays at this speed instead of the animation speed setting, for example 3 for an undo (spec 12.6). */
   speed?: number;
 }
 
@@ -60,7 +60,7 @@ export class Director {
     if (!this.active) this.startNext();
     const active = this.active;
     if (!active) return false;
-    active.timeline.play(this.speed() * (active.job.speed ?? 1));
+    active.timeline.play(this.speedOf(active.job));
     active.timeline.tick(dt);
     if (active.timeline.done) {
       this.endActive();
@@ -104,10 +104,14 @@ export class Director {
     if (!job) return;
     const timeline = job.start();
     this.active = { job, timeline };
-    timeline.play(this.speed() * (job.speed ?? 1));
+    timeline.play(this.speedOf(job));
     // Another job is already waiting, so this one gets the short version too.
     if (this.queue.length > 0) timeline.fastForwardTo(timeline.duration, FAST_FORWARD_SECONDS);
     this.notify();
+  }
+
+  private speedOf(job: Job): number {
+    return job.speed ?? this.speed();
   }
 
   private endActive(announce = true): void {

@@ -4,18 +4,24 @@ import { PLOT_TOP_Y } from '../Foundation';
 import { materials } from '../materials';
 import { Bulldozer } from './Bulldozer';
 import { Crane } from './Crane';
+import { DumpTruck } from './DumpTruck';
 import { Dust } from './Dust';
 import { Excavator, ARM_REST } from './Excavator';
+import { GuardRail } from './GuardRail';
+import { Hoist } from './Hoist';
 import { MixerTruck } from './MixerTruck';
 import { box } from './parts';
 import { SiteProps } from './props';
+import { Rubble } from './Rubble';
 import { Scaffold } from './Scaffold';
 import { Worker } from './Worker';
+import { WreckingBall } from './WreckingBall';
 
 // Everyone and everything that works on the site (spec section 10): a pool of
 // eight workers, the machines parked at the depot facing the plot, the shared
-// tower crane, the scaffold, dust, and the temporary props. Also holds the
-// site layout, chosen so no machine path crosses the tower or another lane.
+// tower crane with its wrecking ball, the hoist, the guard rail, the
+// scaffold, dust, rubble, and the temporary props. Also holds the site
+// layout, chosen so no machine path crosses the tower or another lane.
 
 export const WORKER_POOL = 8;
 
@@ -34,13 +40,23 @@ export const HOMES = {
   excavator: { x: 8.4, z: 1.6, heading: -Math.PI / 2 },
   // The mixer parks cab out, so its chute end can back toward the slab.
   mixer: { x: 8.4, z: -0.8, heading: Math.PI / 2 },
+  // Cab out too, so it backs its bed up to the rubble.
+  dump: { x: 8.9, z: 3.25, heading: Math.PI / 2 },
 } satisfies Record<string, Spot>;
 
 /** Where machines work during a build. */
 export const WORK_SPOTS = {
   excavator: { x: 3.9, z: 1.6, heading: -Math.PI / 2 },
   mixer: { x: 4.05, z: -0.8, heading: Math.PI / 2 },
+  // Beside the front right corner, where rubble can be loaded.
+  dump: { x: 3.7, z: 3.15, heading: Math.PI / 2 },
 } satisfies Record<string, Spot>;
+
+/**
+ * The hoist stands at the tower's rear left edge (spec 10.3), outside the
+ * scaffold line, with its cage riding on the plot side of the mast.
+ */
+export const HOIST = { x: -2.78, mastZ: -2.3, cageZ: -1.86 };
 
 /** The crane stands at the depot's plot side, close enough to reach the whole footprint. */
 export const CRANE_BASE = { x: 5.3, z: -2.0 };
@@ -59,9 +75,14 @@ export class Crew {
   readonly bulldozer = new Bulldozer();
   readonly excavator = new Excavator();
   readonly mixer = new MixerTruck();
+  readonly dumpTruck = new DumpTruck();
   readonly crane: Crane;
+  readonly ball = new WreckingBall();
+  readonly hoist = new Hoist(HOIST.x, HOIST.mastZ, HOIST.cageZ);
+  readonly rail = new GuardRail();
   readonly scaffold = new Scaffold();
   readonly dust = new Dust();
+  readonly rubble = new Rubble();
   readonly props = new SiteProps();
   private towerTop = 0;
 
@@ -77,9 +98,14 @@ export class Crew {
       this.bulldozer.root,
       this.excavator.root,
       this.mixer.root,
+      this.dumpTruck.root,
       this.crane.root,
+      this.ball.root,
+      this.hoist.root,
+      this.rail.root,
       this.scaffold.root,
       this.dust.root,
+      this.rubble.mesh,
       this.props.root,
       this.createStack(),
     );
@@ -115,21 +141,36 @@ export class Crew {
     this.towerTop = y;
   }
 
-  /** Sends everyone home: machines parked, workers hidden, props and dust cleared. */
+  /**
+   * Sends everyone home: machines parked, workers hidden, props and dust
+   * cleared, the crane's jib swung back over the depot. The mast keeps its
+   * height; jobs tween it, and settleMast sets it once the site is idle.
+   */
   park(): void {
     for (const worker of this.workers) worker.hide();
-    const { bulldozer, excavator, mixer } = HOMES;
+    const { bulldozer, excavator, mixer, dump } = HOMES;
     this.bulldozer.drive({ ...bulldozer, distance: 0 }, SITE_Y);
     this.bulldozer.setBlade(0);
     this.excavator.drive({ ...excavator, distance: 0 }, SITE_Y);
     this.excavator.setArm(ARM_REST);
     this.mixer.drive({ ...mixer, distance: 0 }, SITE_Y);
     this.mixer.setDrum(0);
-    this.crane.setMastTop(this.parkedMastTop);
+    this.dumpTruck.drive({ ...dump, distance: 0 }, SITE_Y);
+    this.dumpTruck.setTilt(0);
     this.crane.setPose({ ...CRANE_PARK, hookY: this.crane.hookCeiling });
+    this.ball.hide();
+    this.hoist.hide();
+    this.rail.hide();
     this.scaffold.hide();
     this.dust.clear();
+    this.rubble.hide();
     this.props.reset();
+  }
+
+  /** Stands the mast 3 units over the tower top, never below 3 (spec 10.4). */
+  settleMast(): void {
+    this.crane.setMastTop(this.parkedMastTop);
+    this.crane.setPose({ ...CRANE_PARK, hookY: this.crane.hookCeiling });
   }
 
   /** Per frame: worker poses and dust. Returns true while dust is in the air. */

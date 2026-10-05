@@ -11,7 +11,8 @@ import type { Tower, TowerHit, TowerPreview } from './Tower';
 // and the drag state machine for resizing and moving. A press on a block turns
 // camera orbiting off before OrbitControls sees it (spec 12.10). Drags show a
 // live preview and commit once, on release, through the handlers; the store
-// is never written mid-drag.
+// is never written mid-drag. The block itself stays put while a ghost shows
+// the new times, so the job that plays on release starts where it stands.
 
 /** Pixels the pointer must travel before a press becomes a drag. */
 const DRAG_THRESHOLD = 4;
@@ -272,14 +273,16 @@ export class Picker {
     const delta = minutes - drag.pointerStart;
     // Less than half a slot of travel keeps the block where it was.
     const still = Math.abs(delta) < slot / 2;
-    let ghost: TimeRange | null = null;
-
     if (drag.kind === 'move') {
       const desired = Math.round((start + delta) / slot) * slot;
       const ghostStart = clamp(desired, settings.dayStart, settings.dayEnd - length);
-      ghost = still ? null : { start: ghostStart, end: ghostStart + length };
+      const ghost = still ? null : { start: ghostStart, end: ghostStart + length };
       const landing = still ? start : nearestFreeStart(blocks, settings, length, desired, drag.id, delta > 0) ?? start;
       drag.current = { start: landing, end: landing + length };
+      // The ghost follows the pointer; an outline marks where the block will
+      // land when that is somewhere else (spec 12.4).
+      const moves = landing !== start;
+      this.handlers.preview({ ghost, landing: moves && ghost?.start !== landing ? drag.current : null });
     } else {
       const limits = resizeLimits(blocks, { id: drag.id, start, end }, settings);
       const minLength = Math.min(slot, length);
@@ -294,8 +297,9 @@ export class Picker {
         const next = clamp(Math.round((start + delta) / slot) * slot, low, high);
         drag.current = { start: still ? start : next, end };
       }
+      const changed = drag.current.start !== start || drag.current.end !== end;
+      this.handlers.preview({ ghost: changed ? drag.current : null });
     }
-    this.handlers.preview({ times: new Map([[drag.id, drag.current]]), ghost });
   }
 
   private finishDrag(commit: boolean): void {

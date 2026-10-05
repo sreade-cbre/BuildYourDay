@@ -1,5 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { ROOF_LEAD, craneBatch, crewSize, panelLifts, phaseSchedule } from '../src/anim/jobs/schedule';
+import {
+  DEMOLISH,
+  RUBBLE_EDGE,
+  RUBBLE_MAX,
+  ROOF_LEAD,
+  craneBatch,
+  crewSize,
+  extendSchedule,
+  panelLifts,
+  phaseSchedule,
+  relocateSchedule,
+  rubbleGrid,
+  shrinkDuration,
+} from '../src/anim/jobs/schedule';
 import { spanHeight } from '../src/core/layout';
 
 describe('build schedule', () => {
@@ -47,5 +60,47 @@ describe('build schedule', () => {
         expect(free).toBeLessThanOrEqual(at.roof - ROOF_LEAD + 1e-9);
       }
     }
+  });
+
+  it('fills a demolished block with 0.4 cubes, growing them so there are never more than 400', () => {
+    expect(rubbleGrid(0.75).edge).toBe(RUBBLE_EDGE);
+    for (const minutes of [5, 15, 60, 180, 480, 1080]) {
+      const grid = rubbleGrid(minutes * 0.05);
+      expect(grid.count).toBeLessThanOrEqual(RUBBLE_MAX);
+      expect(grid.count).toBe(grid.across * grid.across * grid.up);
+      expect(grid.edge).toBeGreaterThanOrEqual(RUBBLE_EDGE);
+    }
+    expect(rubbleGrid(3).edge).toBeGreaterThan(RUBBLE_EDGE);
+  });
+
+  it('times a demolition as spec 11.1 does, whatever the height', () => {
+    expect(DEMOLISH.rails).toBe(0.15);
+    expect(DEMOLISH.contact).toBe(0.4);
+    expect(DEMOLISH.rubbleEnd).toBe(1.1);
+    expect(DEMOLISH.rubbleEnd - DEMOLISH.fadeStart).toBeCloseTo(0.3);
+  });
+
+  it('times a shrink at 0.9 s plus 0.2 s a floor, at most 2 s', () => {
+    expect(shrinkDuration(1)).toBeCloseTo(1.1);
+    expect(shrinkDuration(4)).toBeCloseTo(1.7);
+    expect(shrinkDuration(12)).toBe(2);
+  });
+
+  it('runs an extend in order, with roof work only at the top', () => {
+    for (const top of [true, false]) {
+      const { at, d, total } = extendSchedule(1.5, top);
+      expect(at.cladding).toBeGreaterThan(at.frame);
+      expect(at.strike).toBeGreaterThan(at.cladding);
+      expect(at.cleanup + d.cleanup).toBeCloseTo(total);
+      expect(d.capOff > 0).toBe(top);
+    }
+    expect(extendSchedule(1.5, true).total).toBeGreaterThan(extendSchedule(1.5, false).total);
+  });
+
+  it('keeps a relocation short and lets longer trips take a little longer', () => {
+    const near = relocateSchedule(3);
+    const far = relocateSchedule(30);
+    expect(near.total).toBeLessThan(far.total);
+    expect(far.total).toBeLessThan(2.2);
   });
 });

@@ -24,6 +24,7 @@ const geometry = {
   hammerHandle: new THREE.CylinderGeometry(0.008, 0.008, 0.12).rotateX(Math.PI / 2).translate(0, 0, 0.06),
   hammerHead: new THREE.BoxGeometry(0.05, 0.025, 0.025),
   board: new THREE.BoxGeometry(1.2, 0.03, 0.08),
+  plank: new THREE.BoxGeometry(0.14, 0.03, 0.95),
 };
 
 function part(geo: THREE.BufferGeometry, material: THREE.Material): THREE.Mesh {
@@ -47,6 +48,7 @@ export class Worker {
   private readonly kneeR = new THREE.Group();
   private readonly hammer = new THREE.Group();
   private readonly board: THREE.Mesh;
+  private readonly plank: THREE.Mesh;
   private anim: WorkerAnim = 'idle';
   private phase = 0;
   private current: Pose = poseFor('idle', 0);
@@ -119,6 +121,12 @@ export class Worker {
     this.board.position.set(0, 0.33, 0.2);
     this.board.visible = false;
     this.body.add(this.board);
+
+    // A plank carried in both hands, running front to back.
+    this.plank = part(geometry.plank, materials.solid('slatePale'));
+    this.plank.position.set(0, 0.36, 0.22);
+    this.plank.visible = false;
+    this.body.add(this.plank);
   }
 
   get visible(): boolean {
@@ -129,10 +137,17 @@ export class Worker {
     this.root.visible = true;
   }
 
+  /** Scales the whole worker, for popping onto and off a scaffold. */
+  setScale(scale: number): void {
+    this.root.scale.setScalar(Math.max(0.001, scale));
+  }
+
   hide(): void {
     this.root.visible = false;
+    this.root.scale.setScalar(1);
     this.hammer.visible = false;
     this.board.visible = false;
+    this.plank.visible = false;
   }
 
   /** Places the worker's feet at a point, facing a heading. */
@@ -154,6 +169,7 @@ export class Worker {
     this.phase = cycles;
     this.hammer.visible = anim === 'hammer';
     this.board.visible = anim === 'screed';
+    this.plank.visible = anim === 'carry';
   }
 
   /** Plays an animation by elapsed seconds instead of cycles. */

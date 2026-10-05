@@ -147,4 +147,17 @@ describe('Timeline', () => {
     expect(values.get('z')).toEqual([1]);
     expect(log).toEqual(['z:start', 'z:complete']);
   });
+
+  it('completes a step whose end rounds a hair past the timeline end', () => {
+    // 3.95 + 0.35 rounds differently from the 4.3 the other step ends at.
+    const tl = new Timeline();
+    let last = 0;
+    tl.add({ at: 0, duration: 4.3, update: () => {} });
+    tl.add({ at: 3.95, duration: 0.35, update: (t) => (last = t) });
+    tl.play(1);
+    for (let i = 0; i < 400 && !tl.done; i++) tl.tick(1 / 60);
+    expect(tl.done).toBe(true);
+    expect(last).toBe(1);
+  });
 });
+
