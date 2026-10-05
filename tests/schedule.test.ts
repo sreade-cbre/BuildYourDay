@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { SAMPLE_DAY } from '../src/core/defaults';
 import {
   DEMOLISH,
+  MAX_BUILD_SECONDS,
+  ROOF_LIFT,
   RUBBLE_EDGE,
   RUBBLE_MAX,
   ROOF_LEAD,
@@ -41,9 +44,9 @@ describe('build schedule', () => {
   });
 
   it('keeps panel lifts in sequence, between the frame and the roof, for any block', () => {
-    for (const slot of [5, 10, 15, 30, 60]) {
+    for (const tight of [false, true]) for (const slot of [5, 10, 15, 30, 60]) {
       for (let minutes = slot; minutes <= 1080; minutes += slot) {
-        const schedule = phaseSchedule(spanHeight(minutes), true);
+        const schedule = phaseSchedule(spanHeight(minutes), true, tight);
         const { at, d } = schedule;
         const floors = Math.max(1, Math.round(minutes / slot));
         const lifts = panelLifts(floors, schedule);
@@ -103,4 +106,32 @@ describe('build schedule', () => {
     expect(near.total).toBeLessThan(far.total);
     expect(far.total).toBeLessThan(2.2);
   });
+
+  it('builds an 8 hour block in about 9.8 s and nothing longer (spec 18)', () => {
+    expect(phaseSchedule(spanHeight(480), true).total).toBeCloseTo(9.8, 5);
+    for (const tight of [false, true]) {
+      for (let minutes = 5; minutes <= 1080; minutes += 5) {
+        expect(phaseSchedule(spanHeight(minutes), true, tight).total).toBeLessThanOrEqual(MAX_BUILD_SECONDS + 1e-9);
+      }
+    }
+    // Blocks under the cap keep their own length.
+    expect(phaseSchedule(spanHeight(240), true).total).toBeCloseTo(8.86, 2);
+  });
+
+  it('runs a rapid sequence tighter, but sets the roof only once the facade is up', () => {
+    for (let minutes = 5; minutes <= 1080; minutes += 5) {
+      const usual = phaseSchedule(spanHeight(minutes), false);
+      const tight = phaseSchedule(spanHeight(minutes), false, true);
+      // Both stop at the cap for the longest blocks.
+      if (usual.total < MAX_BUILD_SECONDS - 1e-6) expect(tight.total).toBeLessThan(usual.total);
+      else expect(tight.total).toBeLessThanOrEqual(usual.total + 1e-9);
+      expect(tight.at.roof - ROOF_LEAD + ROOF_LIFT).toBeGreaterThanOrEqual(tight.at.cladding + tight.d.cladding);
+    }
+  });
+
+  it('loads the sample day in under 15 s at speed 2.5 (spec 20)', () => {
+    const seconds = SAMPLE_DAY.reduce((sum, block, i) => sum + phaseSchedule(spanHeight(block.end - block.start), i === 0, true).total, 0) / 2.5;
+    expect(seconds).toBeLessThan(15);
+  });
 });
+

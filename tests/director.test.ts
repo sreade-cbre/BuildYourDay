@@ -63,6 +63,29 @@ describe('Director', () => {
     expect(log).toContain('undo:end');
   });
 
+  it('plays a chain in turn without hurrying, but hurries it all when something else arrives', () => {
+    const log: string[] = [];
+    const director = new Director(() => 1);
+    const chain = {};
+    for (const name of ['a', 'b', 'c']) director.enqueue({ ...makeJob(name, 1, log), chain });
+    run(director, 1.05);
+    // The first played its full second before the second began.
+    expect(log).toEqual(['a:start', 'a:done', 'a:end', 'b:start']);
+    director.enqueue(makeJob('user', 1, log));
+    run(director, 0.85);
+    expect(log).toContain('c:end');
+    expect(log).toContain('user:start');
+  });
+
+  it('does not count a long chain against the queue limit', () => {
+    const log: string[] = [];
+    const director = new Director(() => 1);
+    const chain = {};
+    for (let i = 0; i < MAX_QUEUE + 4; i++) director.enqueue({ ...makeJob(`j${i}`, 0.1, log), chain });
+    run(director, 2.5);
+    expect(log.filter((l) => l.endsWith(':done'))).toHaveLength(MAX_QUEUE + 4);
+  });
+
   it('fast-forwards the running job when another arrives, then plays the next', () => {
     const log: string[] = [];
     const director = new Director(() => 1);

@@ -14,7 +14,7 @@ time order, with free time shown as hollow wireframe. The full design lives in
 | M2 | Editing, persistence, settings, list view, dark theme | Done |
 | M3 | First build animation | Done |
 | M4 | Stacked builds and the other jobs | Done |
-| M5 | Living tower: now ring, weathering, idle orbit | Not started |
+| M5 | Living tower: now ring, weathering, idle orbit | Done |
 
 ## Requirements
 
@@ -30,7 +30,8 @@ npm run dev
 
 Then open http://localhost:5173. The app opens on today's date. In
 development, a first run with no saved data offers a "Load sample day" button
-on the plot.
+on the plot; the crew builds its seven blocks one after another in under 15
+seconds.
 
 | Script | What it does |
 |---|---|
@@ -74,7 +75,19 @@ and deleting a block leaves free time behind.
 - **Demolish** with the inspector button or Delete. An Undo toast stays for
   six seconds; Undo rebuilds the block at triple speed.
 - **Change days** with the arrows beside the date, the [ and ] keys, or
-  Today.
+  Today. The new day appears at once, and its blocks warm from pale to their
+  colors, bottom to top, in a short sunrise.
+- **Watch the time.** On today, a blue ring marks the current time on the
+  tower, with a "now" card beside it. It moves every 30 seconds and when you
+  come back to the tab, and is hidden before the day starts and after it
+  ends. Blocks that are done fade to a paler, matte finish and their labels
+  say done; the block under way is paler only below the ring. This never
+  changes your plan, and other days are never weathered.
+- **Leave it running.** After 20 seconds with no input the camera slowly
+  circles the tower until you move the mouse, scroll, or press a key. It
+  waits while the crew works. If the app is open past midnight, a toast
+  offers the new day and the Today button returns, but the day you are
+  viewing stays put.
 - **Highlight a category** by clicking it in the legend; click again or press
   Escape to clear.
 - **Orbit** by dragging empty space and zoom with the wheel. A drag that
@@ -85,7 +98,12 @@ and deleting a block leaves free time behind.
 Plans and settings save to this browser's local storage under
 `timetower.save`. The menu exports a JSON file and imports one (replacing all
 data or merging in days you do not have), copies the previous planned day onto
-an empty day, and clears the current day.
+an empty day, and clears the current day. A copied day is built block by
+block at triple speed by one crew; an import appears without building. Files
+from a newer version of the app are refused. If the browser cannot save (in
+some private windows, or when storage is full), a "Not saving: storage
+unavailable" chip stays on screen; edits keep working for the session, and
+Export still saves a copy.
 
 ### Keyboard
 
@@ -93,7 +111,7 @@ an empty day, and clears the current day.
 |---|---|
 | N | New block |
 | Enter | Confirm the inspector |
-| Escape | Cancel a drag, skip a build, close the inspector, deselect, or clear a highlight |
+| Escape | Cancel a drag, skip a build or the speed preview, close the inspector, deselect, or clear a highlight |
 | Delete, Backspace | Demolish the selected block |
 | Up, Down | Select the next or previous block |
 | [ and ] | Previous or next day |
@@ -114,13 +132,13 @@ and Cancel puts everything back.
 | Slot | 5, 10, 15, or 30 minutes. New edits snap to it. |
 | Time format | 12h or 24h. |
 | Categories | Up to 9, each with a name and one of nine brand colors. Removing one moves its blocks to the first category. |
-| Animation speed | 0.5x to 3x for every construction animation. At 2x a build takes half as long. An undone deletion always rebuilds at 3x. |
-| Reduced motion | System, On, or Off. On turns every construction animation into a quarter second fade or slide. |
-| Idle orbit | Slowly circles the tower when idle (arriving in M5). |
+| Animation speed | 0.5x to 3x for every construction animation. At 2x a build takes half as long. Preview builds a one hour block on a plot beside the tower at the chosen speed, then clears it; Escape skips it. Copied days and undone deletions always build at 3x, and the sample day at 2.5x. |
+| Reduced motion | System, On, or Off. On turns every construction animation into a quarter second fade or slide, stops the idle orbit, and moves the now ring without gliding. |
+| Idle orbit | Slowly circles the tower after 20 seconds without input. |
 | Labels | Always, or only on hover. |
-| Weather past blocks | Fades blocks that are done (arriving in M5). |
+| Weather past blocks | On today, blocks that are done fade to a paler, matte finish. |
 | Theme | Light or Dark. |
-| Palette mode | Strict brand colors, or Accents, which adds grass green and hi-vis orange. |
+| Palette mode | Strict brand colors (default), or Accents, which adds grass green for the plot and hi-vis orange for worker vests. |
 | Data | Export JSON, Import JSON, Clear this day, Clear all data (type clear to confirm). |
 
 ## Project layout
@@ -129,11 +147,11 @@ and Cancel puts everything back.
 src/
   brand/tokens.ts   the only file allowed to contain hex colors
   core/             pure logic: model, time, layout, store, rng (no three, no DOM)
-  scene/            three.js scene: SceneRoot, Ground, Tower, blocks, gaps, labels
+  scene/            three.js scene: SceneRoot, Ground, Tower, blocks, gaps, labels, now ring
   scene/crew/       workers, machines, crane, hoist, scaffold, rubble, dust, and site props
   ui/               HTML overlay
   anim/             Timeline, Director, easing, paths, and the job planner (plan.ts)
-  anim/jobs/        build, extend, shrink, resize, demolish, relocate, settle, and their timing (schedule.ts)
+  anim/jobs/        build, extend, shrink, resize, demolish, relocate, settle, the speed preview, and their timing (schedule.ts)
 tests/              Vitest unit tests for core logic, animation timing, and brand rules
 ```
 

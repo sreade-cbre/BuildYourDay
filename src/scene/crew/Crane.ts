@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { materials } from '../materials';
-import { box } from './parts';
+import { box, pointInParent } from './parts';
 
 // The shared tower crane (spec section 10.4). It stands at the depot; the
 // slewing unit turns the jib, the trolley runs along it, and the hook hangs
@@ -125,8 +125,8 @@ export class Crane {
     return { slew: Math.atan2(-dz, dx), trolley: Math.hypot(dx, dz) };
   }
 
-  /** World position where a carried item hangs. */
-  hookWorld(target: THREE.Vector3): THREE.Vector3 {
-    return this.hook.getWorldPosition(target);
+  /** Where a carried item hangs, in the crew's frame. */
+  hookPoint(target: THREE.Vector3): THREE.Vector3 {
+    return pointInParent(this.root, this.hook, target);
   }
 }

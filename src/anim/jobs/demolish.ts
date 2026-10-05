@@ -50,7 +50,7 @@ export function demolishJob(scene: JobScene, block: Block, calm: boolean): Job {
   const pose = tower.poseFor(block);
   // The removed block stands as a copy until its demolition plays.
   const proxy = new BlockMesh(block.id, token);
-  proxy.setAppearance({ token, dimmed: false, hovered: false, hatched: !isInWindow(block, scene.settings()) });
+  proxy.setAppearance({ token, dimmed: false, hovered: false, hatched: !isInWindow(block, scene.settings()), weathered: false });
   proxy.setBaseY(pose.baseY);
   proxy.setHeight(pose.height);
   proxy.root.visible = false;
@@ -118,7 +118,7 @@ function demolishTimeline(scene: JobScene, block: Block, pose: BlockPose, proxy:
   c.swing(crane.currentPose, swing, 0, 0.28);
   const hook = new THREE.Vector3();
   const hang = (angle: number) => {
-    crane.hookWorld(hook);
+    crane.hookPoint(hook);
     ball.set(hook, angle);
   };
   c.step(0, DEMOLISH.contact, (t) => {
@@ -155,7 +155,7 @@ function demolishTimeline(scene: JobScene, block: Block, pose: BlockPose, proxy:
   c.step(DEMOLISH.contact, DEMOLISH.rubbleEnd - DEMOLISH.contact, (t) => {
     const time = t * (DEMOLISH.rubbleEnd - DEMOLISH.contact);
     const now = DEMOLISH.contact + time;
-    dumpTruck.bedWorld(bed);
+    dumpTruck.bedPoint(bed);
     cubes.forEach((cube, i) => {
       const s = Math.min(1, time / cube.fall);
       const spread = easeOutCubic(s);

@@ -40,6 +40,14 @@ export function edgeToken(token: SwatchToken): SwatchToken {
   return token === DARK[token] ? LIGHT[token] : DARK[token];
 }
 
+/** How far a past block's color moves toward slateLight (spec 5.7). */
+export const WEATHER_SHARE = 0.35;
+
+/** A past block's color: its category color 35% of the way to slateLight (spec 5.7). */
+export function weatheredColor(name: AnyTokenName): THREE.Color {
+  return colorOf(name).lerp(colorOf('slateLight'), WEATHER_SHARE);
+}
+
 /** How a block is drawn: as is, dimmed by a legend highlight, or hovered. */
 export type BlockVariant = 'normal' | 'dimmed';
 export type EdgeVariant = 'normal' | 'hover' | 'dimmed';
@@ -77,6 +85,49 @@ class MaterialLibrary {
         polygonOffsetFactor: 1,
         polygonOffsetUnits: 1,
         ...(variant === 'dimmed' ? { transparent: true, opacity: DIMMED_OPACITY } : {}),
+      }),
+    );
+  }
+
+  /**
+   * A past block's faces (spec 5.7 and 11.4): the category color weathered
+   * toward slateLight, roughness 1.
+   */
+  blockWeathered(token: SwatchToken, variant: BlockVariant = 'normal'): THREE.MeshStandardMaterial {
+    return this.shared(`weathered:${token}:${variant}`, () =>
+      new THREE.MeshStandardMaterial({
+        color: weatheredColor(token),
+        roughness: 1,
+        metalness: 0,
+        polygonOffset: true,
+        polygonOffsetFactor: 1,
+        polygonOffsetUnits: 1,
+        ...(variant === 'dimmed' ? { transparent: true, opacity: DIMMED_OPACITY } : {}),
+      }),
+    );
+  }
+
+  /** A past block's roof cap, weathered like its faces. */
+  capWeathered(token: SwatchToken, variant: BlockVariant = 'normal'): THREE.MeshStandardMaterial {
+    return this.shared(`weathered-cap:${token}:${variant}`, () =>
+      new THREE.MeshStandardMaterial({
+        color: weatheredColor(darkVariant(token)),
+        roughness: 1,
+        metalness: 0,
+        ...(variant === 'dimmed' ? { transparent: true, opacity: DIMMED_OPACITY } : {}),
+      }),
+    );
+  }
+
+  /** The now ring (spec 5.7): blue, glowing a little. */
+  nowRing(): THREE.MeshStandardMaterial {
+    return this.shared('now-ring', () =>
+      new THREE.MeshStandardMaterial({
+        color: colorOf('blue'),
+        emissive: colorOf('blue'),
+        emissiveIntensity: 0.6,
+        roughness: 0.6,
+        metalness: 0,
       }),
     );
   }

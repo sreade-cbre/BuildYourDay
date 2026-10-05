@@ -151,7 +151,7 @@ export class Choreography {
     const atRelease: CranePose = { ...drop, hookY: releaseHook };
     const release = new THREE.Vector3();
     const carryAtHook = () => {
-      crane.hookWorld(this.v);
+      crane.hookPoint(this.v);
       cargo.carry(this.v);
     };
 

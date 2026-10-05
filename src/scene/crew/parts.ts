@@ -40,6 +40,15 @@ export interface Drive {
   distance: number;
 }
 
+/**
+ * A part's position in the frame of the object's parent, the crew. Jobs place
+ * everything in that frame, so the whole crew can work on another plot.
+ */
+export function pointInParent(root: THREE.Object3D, part: THREE.Object3D, target: THREE.Vector3): THREE.Vector3 {
+  part.getWorldPosition(target);
+  return root.parent ? root.parent.worldToLocal(target) : target;
+}
+
 /** Window glass for cabs. */
 export function glass(): THREE.Material {
   return materials.solid('bluePale', 0.4);

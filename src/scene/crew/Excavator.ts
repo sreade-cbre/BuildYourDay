@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { materials } from '../materials';
-import { Wheel, box, glass, type Drive } from './parts';
+import { Wheel, box, glass, pointInParent, type Drive } from './parts';
 
 // Excavator (spec 10.3): track base, a house that swings, and a boom, stick,
 // and bucket on pivots. Faces +z.
@@ -84,8 +84,8 @@ export class Excavator {
   }
 
   /** World position of the bucket, for dust. */
-  bucketWorld(target: THREE.Vector3): THREE.Vector3 {
-    return this.bucket.getWorldPosition(target);
+  bucketPoint(target: THREE.Vector3): THREE.Vector3 {
+    return pointInParent(this.root, this.bucket, target);
   }
 
   drive(state: Drive, y: number): void {

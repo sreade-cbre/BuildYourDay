@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { materials } from '../materials';
-import { Wheel, box, glass, type Drive } from './parts';
+import { Wheel, box, glass, pointInParent, type Drive } from './parts';
 
 // Dump truck (spec 10.3): cab, chassis, four wheels, and an open bed on a
 // `tilt` pivot at its back edge. The cab faces +z, like the mixer truck.
@@ -59,10 +59,9 @@ export class DumpTruck {
     this.tilt.rotation.x = -angle;
   }
 
-  /** World point a little above the bed floor, where loads come to rest. */
-  bedWorld(target: THREE.Vector3): THREE.Vector3 {
-    this.root.updateMatrixWorld(true);
-    return this.bedCenter.getWorldPosition(target);
+  /** A point a little above the bed floor, where loads come to rest, in the crew's frame. */
+  bedPoint(target: THREE.Vector3): THREE.Vector3 {
+    return pointInParent(this.root, this.bedCenter, target);
   }
 
   drive(state: Drive, y: number): void {

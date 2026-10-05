@@ -39,6 +39,14 @@ export interface LabelSpace {
 /** Runs every frame while registered. Return false when finished. */
 export type Animator = (dt: number) => boolean;
 
+/** A camera place to come back to: what it looks at, and from where. */
+export interface CameraView {
+  target: THREE.Vector3;
+  offset: THREE.Spherical;
+}
+
+const ORIGIN = new THREE.Vector3();
+
 export class SceneRoot {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene = new THREE.Scene();
@@ -316,24 +324,50 @@ export class SceneRoot {
     this.frameTower(this.towerHeight, true);
   }
 
+  /** Where the camera is now, to come back to after a detour. */
+  saveView(): CameraView {
+    return {
+      target: this.controls.target.clone(),
+      offset: new THREE.Spherical().setFromVector3(this.camera.position.clone().sub(this.controls.target)),
+    };
+  }
+
+  /** Tweens back to a saved view, and the sun back to the main site. */
+  restoreView(view: CameraView, seconds = FRAME_TWEEN_SECONDS): void {
+    this.tweenCamera(view.target, view.offset, seconds);
+    this.fitShadowCamera(this.towerHeight);
+  }
+
+  /**
+   * Frames another site, centered at `center`, with a tower up to `height`,
+   * as the animation speed preview does (spec 14). The sun's shadows follow.
+   * The default framing for Reset view is left as it was.
+   */
+  frameSite(center: THREE.Vector3, height: number, seconds = FRAME_TWEEN_SECONDS): void {
+    const target = this.framingTarget(height).add(center);
+    const distance = this.fitDistance(height, center);
+    this.tweenCamera(target, new THREE.Spherical(distance, DEFAULT_POLAR, DEFAULT_AZIMUTH), seconds);
+    this.fitShadowCamera(height, center);
+  }
+
   /** The distance at which the default framing fits, for the current aspect. */
   get framingDistance(): number {
     return this.defaultDistance;
   }
 
-  private fitDistance(towerHeight: number): number {
-    const target = this.framingTarget(towerHeight);
+  private fitDistance(towerHeight: number, center: THREE.Vector3 = ORIGIN): number {
+    const target = this.framingTarget(towerHeight).add(center);
     const direction = new THREE.Vector3().setFromSpherical(new THREE.Spherical(1, DEFAULT_POLAR, DEFAULT_AZIMUTH));
     const half = BLOCK_FOOTPRINT / 2;
     const plotHalf = PLOT_SIZE / 2;
     const points: THREE.Vector3[] = [];
     for (const x of [-half, half]) {
       for (const z of [-half, half]) {
-        points.push(new THREE.Vector3(x, 0, z), new THREE.Vector3(x, towerHeight, z));
+        points.push(new THREE.Vector3(x, 0, z).add(center), new THREE.Vector3(x, towerHeight, z).add(center));
       }
     }
     for (const x of [-plotHalf, plotHalf]) {
-      for (const z of [-plotHalf, plotHalf]) points.push(new THREE.Vector3(x, GROUND_Y, z));
+      for (const z of [-plotHalf, plotHalf]) points.push(new THREE.Vector3(x, GROUND_Y, z).add(center));
     }
 
     const probe = this.camera.clone();
@@ -410,10 +444,10 @@ export class SceneRoot {
 
   // Lighting
 
-  /** Fits the orthographic shadow camera to the plot, depot, and full tower height. */
-  private fitShadowCamera(towerHeight: number): void {
-    this.sun.position.copy(LIGHT_DIRECTION).multiplyScalar(120);
-    this.sun.target.position.set(0, 0, 0);
+  /** Fits the orthographic shadow camera to a site's plot, depot, and full tower height. */
+  private fitShadowCamera(towerHeight: number, center: THREE.Vector3 = ORIGIN): void {
+    this.sun.position.copy(LIGHT_DIRECTION).multiplyScalar(120).add(center);
+    this.sun.target.position.copy(center);
     this.sun.updateMatrixWorld();
     this.sun.target.updateMatrixWorld();
 
@@ -431,7 +465,7 @@ export class SceneRoot {
     for (const x of xs) {
       for (const y of ys) {
         for (const z of zs) {
-          corner.set(x, y, z).applyMatrix4(camera.matrixWorldInverse);
+          corner.set(x, y, z).add(center).applyMatrix4(camera.matrixWorldInverse);
           min.min(corner);
           max.max(corner);
         }

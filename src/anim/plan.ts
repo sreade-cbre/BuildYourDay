@@ -13,8 +13,16 @@ export interface BlockMove {
   to: Block;
 }
 
+/** An undone deletion rebuilds at speed 3 (spec 12.6). */
+export const UNDO_SPEED = 3;
+/** A copied day builds in sequence at speed 3 (spec 12.8). */
+export const COPY_SPEED = 3;
+/** The sample day builds in sequence at speed 2.5 (spec 20). */
+export const SAMPLE_SPEED = 2.5;
+
 export type JobPlan =
-  | { kind: 'build'; block: Block; fast: boolean }
+  /** `sequence` builds play in turn, one after another, with one shared crew. */
+  | { kind: 'build'; block: Block; speed?: number; sequence?: boolean }
   | { kind: 'demolish'; block: Block }
   | { kind: 'resize'; move: BlockMove }
   | { kind: 'relocate'; move: BlockMove; settles: BlockMove[] }
@@ -64,9 +72,10 @@ function planMoves(moves: BlockMove[], selectedId: BlockId | null): JobPlan[] {
 
 /**
  * The jobs for a store event on the viewed day. Users' single edits animate;
- * an undone deletion of one block rebuilds it fast (spec 12.6); bulk changes
- * such as the sample day, copying a day, imports, settings, and clearing a
- * day finish whatever is playing and show at once.
+ * an undone deletion of one block rebuilds it fast (spec 12.6); a copied day
+ * and the sample day build block by block in a rapid sequence (spec 12.8 and
+ * 20). Other bulk changes, such as imports, settings, and clearing a day,
+ * finish whatever is playing and show at once.
  */
 export function planJobs(event: StoreEvent, viewedDate: IsoDate, selectedId: BlockId | null): Plan {
   if (event.type !== 'blocks') return FINISH;
@@ -76,14 +85,19 @@ export function planJobs(event: StoreEvent, viewedDate: IsoDate, selectedId: Blo
   const removed = changes.filter((c) => c.kind === 'removed');
 
   if (origin === 'undo') {
-    return added.length === 1 ? { finish: false, jobs: [{ kind: 'build', block: added[0]!.block, fast: true }] } : FINISH;
+    return added.length === 1 ? { finish: false, jobs: [{ kind: 'build', block: added[0]!.block, speed: UNDO_SPEED }] } : FINISH;
+  }
+  if (origin === 'copy' || origin === 'sample') {
+    const speed = origin === 'copy' ? COPY_SPEED : SAMPLE_SPEED;
+    const blocks = added.map((c) => c.block).sort((a, b) => a.start - b.start);
+    return { finish: true, jobs: blocks.map((block) => ({ kind: 'build', block, speed, sequence: true })) };
   }
   if (origin !== 'user') return FINISH;
 
   // A new color applies at once, so anything mid-build finishes first.
   const finish = changes.some((c) => c.kind === 'recategorized') || added.length > 1 || removed.length > 1;
   const jobs: JobPlan[] = [];
-  if (added.length === 1) jobs.push({ kind: 'build', block: added[0]!.block, fast: false });
+  if (added.length === 1) jobs.push({ kind: 'build', block: added[0]!.block });
   if (removed.length === 1) jobs.push({ kind: 'demolish', block: removed[0]!.block });
   for (const move of movesOf(changes, 'resized')) jobs.push({ kind: 'resize', move });
   jobs.push(...planMoves(movesOf(changes, 'moved'), selectedId));

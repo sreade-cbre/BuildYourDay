@@ -29,12 +29,12 @@ describe('planJobs', () => {
   it('builds a block the user adds', () => {
     const a = block('a', 540, 600);
     const plan = planJobs(blocksEvent([{ kind: 'added', block: a }]), DAY, null);
-    expect(plan).toEqual({ finish: false, jobs: [{ kind: 'build', block: a, fast: false }] });
+    expect(plan).toEqual({ finish: false, jobs: [{ kind: 'build', block: a }] });
   });
 
   it('rebuilds fast when one deleted block is undone, and shows a whole day at once', () => {
     const a = block('a', 540, 600);
-    expect(planJobs(blocksEvent([{ kind: 'added', block: a }], 'undo'), DAY, null).jobs).toEqual([{ kind: 'build', block: a, fast: true }]);
+    expect(planJobs(blocksEvent([{ kind: 'added', block: a }], 'undo'), DAY, null).jobs).toEqual([{ kind: 'build', block: a, speed: 3 }]);
     const day = [a, block('b', 600, 660)].map((b) => ({ kind: 'added' as const, block: b }));
     expect(planJobs(blocksEvent(day, 'undo'), DAY, null)).toEqual({ finish: true, jobs: [] });
   });
@@ -82,9 +82,23 @@ describe('planJobs', () => {
     expect(job.kind === 'relocate' && job.move.to.id).toBe('b');
   });
 
+  it('builds a copied day at speed 3 and the sample day at 2.5, in order, as one sequence', () => {
+    const late = block('late', 600, 660);
+    const early = block('early', 420, 480);
+    const added = [late, early].map((b) => ({ kind: 'added' as const, block: b }));
+    const copy = planJobs(blocksEvent(added, 'copy'), DAY, null);
+    expect(copy.finish).toBe(true);
+    expect(copy.jobs).toEqual([
+      { kind: 'build', block: early, speed: 3, sequence: true },
+      { kind: 'build', block: late, speed: 3, sequence: true },
+    ]);
+    const sample = planJobs(blocksEvent(added, 'sample'), DAY, null);
+    expect(sample.jobs.map((j) => j.kind === 'build' && j.speed)).toEqual([2.5, 2.5]);
+  });
+
   it('finishes running jobs for bulk changes and for anything outside block edits', () => {
     const a = block('a', 540, 600);
-    for (const origin of ['sample', 'copy', 'import', 'settings'] as const) {
+    for (const origin of ['import', 'settings'] as const) {
       expect(planJobs(blocksEvent([{ kind: 'added', block: a }], origin), DAY, null)).toEqual({ finish: true, jobs: [] });
     }
     expect(planJobs({ type: 'viewedDate', previous: DAY, current: '2026-10-06' }, DAY, null).finish).toBe(true);

@@ -9,16 +9,17 @@ import {
   minutesToY,
   spanHeight,
 } from '../core/layout';
-import type { Block, BlockId, CategoryId, LabelMode, TimeRange } from '../core/model';
+import type { Block, BlockId, CategoryId, LabelMode, SwatchToken, TimeRange } from '../core/model';
 import type { Store, StoreEvent } from '../core/store';
 import { formatDuration, formatTimeShort } from '../core/time';
+import { easeInOutCubic } from '../anim/easing';
 import { BlockMesh } from './BlockMesh';
 import { Foundation } from './Foundation';
 import { GapMesh } from './GapMesh';
 import type { Ground } from './Ground';
 import type { BlockPose, Holds } from './holds';
 import { Label, type LabelText } from './Label';
-import { DIMMED_OPACITY, materials } from './materials';
+import { DIMMED_OPACITY, colorOf, darkVariant, materials, weatheredColor } from './materials';
 import type { LabelSpace } from './SceneRoot';
 
 // Owns the meshes for the viewed day and reconciles them against the store by
@@ -94,6 +95,23 @@ interface LabelPlan {
 
 const NO_DECOR: TowerDecor = { selectedId: null, hoveredId: null, hoveredGapStart: null, highlightedCategory: null };
 
+/** A block's weathering (spec 11.4): not yet done, done, or under way now. */
+type Weather = 'fresh' | 'past' | 'current';
+
+/** Seconds a block takes to cross-fade to weathered (spec 11.4). */
+const WEATHER_FADE_SECONDS = 2;
+/** The day change sunrise (spec 12.7): each block's fade and the whole sweep. */
+const SUNRISE_SECONDS = 0.4;
+const SUNRISE_FADE = 0.2;
+
+/** Materials that stand in for a block's shared ones during a fade. */
+interface Override {
+  body: THREE.Material;
+  cap: THREE.Material;
+  /** The part above the now ring, for the block under way. */
+  upper?: THREE.Material;
+}
+
 export class Tower {
   readonly root = new THREE.Group();
   /** Called whenever the tower changed and the scene should redraw. */
@@ -107,6 +125,25 @@ export class Tower {
    * has no labels, so a day's first label does not stall a frame compiling it.
    */
   private readonly keeper = new Label();
+  /**
+   * Minutes into the viewed day when it is today and weathering is on, else
+   * null. The block it runs through splits at the now ring's height.
+   */
+  private now: number | null = null;
+  private readonly planeBelow = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0);
+  private readonly planeAbove = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  private readonly splitBelow: THREE.MeshStandardMaterial;
+  private readonly splitAbove: THREE.MeshStandardMaterial;
+  /** What each block last showed, so a block that becomes done can fade. */
+  private weatherShown = new Map<BlockId, Weather | 'hidden'>();
+  /** True while a change of time should land without fading, such as a day change. */
+  private quietWeather = false;
+  private readonly overrides = new Map<BlockId, Override>();
+  private syncedDate: string | null = null;
+  /** Lets the tower run a per-frame animation, for fades. Set by the app. */
+  animate: ((animator: (dt: number) => boolean) => void) | null = null;
+  /** Bumped by each slide, so an older one stops when a newer starts. */
+  private slideRun = 0;
   private readonly leaderGeometry = new THREE.BufferGeometry();
   private readonly leaders: THREE.LineSegments;
   private readonly outline: THREE.LineSegments;
@@ -150,6 +187,19 @@ export class Tower {
     this.keeper.setText({ title: ' ', detail: ' ' });
     this.keeper.sprite.visible = false;
 
+    // One block at a time runs through the current time, so one pair of
+    // clipped materials, recolored for it, draws its two parts.
+    this.splitBelow = materials.blockWeathered('navy').clone();
+    this.splitBelow.clippingPlanes = [this.planeBelow];
+    this.splitAbove = materials.blockBody('navy').clone();
+    this.splitAbove.clippingPlanes = [this.planeAbove];
+    // Never drawn; keeps both in the scene so the startup warm up compiles them.
+    for (const material of [this.splitBelow, this.splitAbove]) {
+      const holder = new THREE.Mesh(ghostGeometry, material);
+      holder.visible = false;
+      this.root.add(holder);
+    }
+
     this.root.add(this.leaders, this.outline, this.ghost, this.landing, this.keeper.sprite);
     this.unsubscribe = store.subscribe((event) => this.onStoreEvent(event));
     this.sync();
@@ -187,9 +237,66 @@ export class Tower {
     return { baseY: minutesToY(span.start, settings), height: spanHeight(span.end - span.start), x: 0, z: 0 };
   }
 
+  /**
+   * Sets the minute weathering follows (spec 11.4), or null when the viewed
+   * day is not today or weathering is off. With `fade`, blocks that this
+   * makes done cross-fade over 2 s; without it, as after a day change or a
+   * load, they show weathered at once.
+   */
+  setNow(minutes: number | null, fade: boolean): void {
+    if (minutes === this.now) return;
+    this.now = minutes;
+    this.quietWeather = !fade;
+    this.sync();
+    this.quietWeather = false;
+  }
+
+  /**
+   * Shows the whole tower `offset` units from where it stands, then slides it
+   * home over 0.6 s, as when the day start changes (spec 14). The slab stays
+   * on the plot throughout.
+   */
+  slideFrom(offset: number, seconds = 0.6): void {
+    if (!this.animate || Math.abs(offset) < 1e-6) return;
+    const run = ++this.slideRun;
+    const from = this.root.position.y + offset;
+    const place = (y: number) => {
+      this.root.position.y = y;
+      this.foundation.root.position.y = -y;
+    };
+    place(from);
+    let elapsed = 0;
+    this.animate((dt) => {
+      if (run !== this.slideRun) return false;
+      elapsed += dt;
+      const t = Math.min(1, elapsed / seconds);
+      place(from * (1 - easeInOutCubic(t)));
+      this.onChange?.();
+      return t < 1;
+    });
+  }
+
+  /** Moves the line between weathered and fresh to a height, following the now ring. */
+  setNowY(y: number): void {
+    this.planeBelow.constant = y;
+    this.planeAbove.constant = -y;
+  }
+
+  private weatherOf(block: Block, inside: boolean): Weather {
+    if (this.now === null || !inside) return 'fresh';
+    if (block.end <= this.now) return 'past';
+    return block.start < this.now ? 'current' : 'fresh';
+  }
+
   /** Brings every mesh in line with the store's viewed day. */
   sync(): void {
     const settings = this.store.settings;
+    // On a new day nothing fades in; the sunrise covers the change.
+    const sameDay = this.syncedDate === this.store.viewedDate;
+    if (!sameDay) {
+      this.syncedDate = this.store.viewedDate;
+      this.weatherShown.clear();
+    }
     this.labelMode = settings.labelMode;
     const blocks = this.store.blocks;
     const live = new Set<BlockId>();
@@ -220,8 +327,36 @@ export class Tower {
 
       const category = this.store.categoryFor(block);
       view.dimmed = highlightedCategory !== null && category.id !== highlightedCategory;
-      view.mesh.setAppearance({ token: category.color, dimmed: view.dimmed, hovered: hoveredId === block.id, hatched: !inside });
-      view.label.setText(this.labelText(block, inside));
+      const weather = this.weatherOf(block, inside);
+      const split = weather === 'current' && !view.dimmed;
+      if (!split) view.mesh.clearSplit();
+      view.mesh.setAppearance({
+        token: category.color,
+        dimmed: view.dimmed,
+        hovered: hoveredId === block.id,
+        hatched: !inside,
+        weathered: weather === 'past',
+      });
+      if (split) {
+        this.splitBelow.color.copy(weatheredColor(category.color));
+        this.splitAbove.color.copy(colorOf(category.color));
+        view.mesh.setSplit(this.splitBelow, this.splitAbove);
+      }
+      const override = this.overrides.get(block.id);
+      if (override) view.mesh.useMaterials(override.body, view.mesh.edges.material as THREE.Material, override.cap, override.upper);
+      // A block that becomes done while in view fades over 2 s, and so does
+      // one that was done by the time its build finished. One that was under
+      // way is already mostly weathered, so it changes without a fade, and
+      // blocks that arrive all at once, as from a load, need none.
+      if (this.holds.isHidden(block.id)) {
+        this.weatherShown.set(block.id, 'hidden');
+      } else {
+        const before = this.weatherShown.get(block.id);
+        const fade = sameDay && !this.quietWeather && weather === 'past' && (before === 'fresh' || before === 'hidden');
+        if (fade && !view.dimmed) this.fadeToWeathered(view, category.color);
+        this.weatherShown.set(block.id, weather);
+      }
+      view.label.setText(this.labelText(block, inside, weather === 'past'));
       view.label.sprite.visible = this.labelMode === 'always' || block.id === hoveredId || block.id === selectedId;
 
       if (inside && block.end > topEnd) {
@@ -289,13 +424,89 @@ export class Tower {
       : { start: settings.dayEnd - OUTSIDE_BAND_MINUTES, end: settings.dayEnd };
   }
 
-  private labelText(block: Block, inside: boolean): LabelText {
+  /** Cross-fades a block that just became done to the weathered look (spec 11.4). */
+  private fadeToWeathered(view: BlockView, token: SwatchToken): void {
+    if (!this.animate || this.overrides.has(view.block.id)) return;
+    const id = view.block.id;
+    const body = materials.blockBody(token).clone();
+    const cap = materials.blockCap(token).clone();
+    const from = [body.color.clone(), cap.color.clone()];
+    const to = [weatheredColor(token), weatheredColor(darkVariant(token))];
+    const fromRoughness = [body.roughness, cap.roughness];
+    this.overrides.set(id, { body, cap });
+    view.mesh.useMaterials(body, view.mesh.edges.material as THREE.Material, cap);
+    let elapsed = 0;
+    this.animate((dt) => {
+      elapsed += dt;
+      const t = Math.min(1, elapsed / WEATHER_FADE_SECONDS);
+      [body, cap].forEach((material, i) => {
+        material.color.lerpColors(from[i]!, to[i]!, t);
+        material.roughness = fromRoughness[i]! + (1 - fromRoughness[i]!) * t;
+      });
+      if (t >= 1) this.endOverride(id);
+      this.onChange?.();
+      return t < 1;
+    });
+  }
+
+  /**
+   * The day change sunrise (spec 12.7): every block starts slatePale and
+   * takes on its color, the lowest first, over 0.4 s.
+   */
+  playSunrise(): void {
+    if (!this.animate) return;
+    const top = Math.max(1e-6, this.topYValue);
+    const fades: Array<{ id: BlockId; materials: THREE.MeshStandardMaterial[]; targets: THREE.Color[]; delay: number }> = [];
+    for (const view of this.views.values()) {
+      const id = view.block.id;
+      if (this.holds.isClaimed(id) || this.overrides.has(id)) continue;
+      const body = (view.mesh.body.material as THREE.MeshStandardMaterial).clone();
+      const cap = (view.mesh.cap.material as THREE.MeshStandardMaterial).clone();
+      // The block under way has a second part above the ring, which warms up with the rest.
+      const upper = (view.mesh.upperMaterial as THREE.MeshStandardMaterial | null)?.clone();
+      const parts = upper ? [body, cap, upper] : [body, cap];
+      const targets = parts.map((material) => material.color.clone());
+      for (const material of parts) material.color.copy(colorOf('slatePale'));
+      this.overrides.set(id, { body, cap, upper });
+      view.mesh.useMaterials(body, view.mesh.edges.material as THREE.Material, cap, upper);
+      fades.push({ id, materials: parts, targets, delay: (view.mesh.baseY / top) * (SUNRISE_SECONDS - SUNRISE_FADE) });
+    }
+    if (fades.length === 0) return;
+    const pale = colorOf('slatePale');
+    let elapsed = 0;
+    this.animate((dt) => {
+      elapsed += dt;
+      for (const fade of fades) {
+        const t = Math.min(1, Math.max(0, (elapsed - fade.delay) / SUNRISE_FADE));
+        fade.materials.forEach((material, i) => material.color.lerpColors(pale, fade.targets[i]!, t));
+      }
+      const done = elapsed >= SUNRISE_SECONDS;
+      if (done) for (const fade of fades) this.endOverride(fade.id);
+      this.onChange?.();
+      return !done;
+    });
+  }
+
+  /** Drops a block's stand-in materials and gives it its shared ones back. */
+  private endOverride(id: BlockId): void {
+    const override = this.overrides.get(id);
+    if (!override) return;
+    this.overrides.delete(id);
+    override.body.dispose();
+    override.cap.dispose();
+    override.upper?.dispose();
+    this.sync();
+  }
+
+  private labelText(block: Block, inside: boolean, done = false): LabelText {
     const settings = this.store.settings;
     const range = `${formatTimeShort(block.start, settings)} to ${formatTimeShort(block.end, settings)}`;
     const parts = [range, formatDuration(block.end - block.start)];
     // Category in words too, so color is never the only carrier (spec 17).
     parts.push(this.store.categoryFor(block).name);
     if (!inside) parts.push('outside window');
+    // Weathering is never color alone (spec 17).
+    if (done) parts.push('done');
     return { title: block.title || 'Untitled', detail: parts.join(' · ') };
   }
 
@@ -505,6 +716,14 @@ export class Tower {
       view.label.dispose();
     }
     this.views.clear();
+    for (const override of this.overrides.values()) {
+      override.body.dispose();
+      override.cap.dispose();
+      override.upper?.dispose();
+    }
+    this.overrides.clear();
+    this.splitBelow.dispose();
+    this.splitAbove.dispose();
     for (const gap of this.gaps) gap.dispose();
     this.gaps = [];
     this.keeper.dispose();

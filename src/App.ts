@@ -2,14 +2,15 @@ import * as THREE from 'three';
 import { Director, type Job } from './anim/Director';
 import { buildJob, fadeInJob } from './anim/jobs/build';
 import { demolishJob } from './anim/jobs/demolish';
+import { previewJob } from './anim/jobs/preview';
 import { relocateJob } from './anim/jobs/relocate';
 import { resizeJob } from './anim/jobs/resize';
 import type { JobScene } from './anim/jobs/scene';
 import { settleJob } from './anim/jobs/settle';
 import { planJobs, type JobPlan } from './anim/plan';
 import { LIMITS, sampleBlocks } from './core/defaults';
-import { defaultNewRange, gapDraftRange, resizeLimits, totals, towerHeight } from './core/layout';
-import type { BlockId, CategoryId, Settings, TimeRange } from './core/model';
+import { UNITS_PER_MINUTE, defaultNewRange, gapDraftRange, minutesToY, resizeLimits, totals, towerHeight } from './core/layout';
+import type { Block, BlockId, CategoryId, Settings, TimeRange } from './core/model';
 import {
   PERSIST_MESSAGES,
   Saver,
@@ -20,13 +21,14 @@ import {
   type StorageLike,
 } from './core/persist';
 import { MESSAGES, Store, type BlockPatch, type StoreEvent } from './core/store';
-import { addDays, ceilToSlot, clamp, floorToSlot, formatDateTitle, formatDurationLong, todayIso } from './core/time';
+import { addDays, ceilToSlot, clamp, floorToSlot, formatDateTitle, formatDurationLong, formatTimeShort, nowMinutes, todayIso } from './core/time';
 import { Crew } from './scene/crew/Crew';
 import { Ground } from './scene/Ground';
 import { Holds } from './scene/holds';
 import { materials } from './scene/materials';
 import { Picker } from './scene/Picker';
 import { DEFAULT_AZIMUTH, SceneRoot } from './scene/SceneRoot';
+import { NowRing } from './scene/NowRing';
 import { Tower } from './scene/Tower';
 import { DebugPanel } from './ui/DebugPanel';
 import { Dialog, choose } from './ui/Dialog';
@@ -54,6 +56,7 @@ export interface AppHosts {
 
 interface SceneParts {
   root: SceneRoot;
+  nowRing: NowRing;
   ground: Ground;
   tower: Tower;
   picker: Picker;
@@ -64,6 +67,13 @@ interface SceneParts {
 }
 
 const GAP_TOO_SHORT = 'That gap is shorter than one slot, so pick a longer gap.';
+/** How often the now ring, weathering, and the date catch up with the clock (spec 8.6). */
+const CLOCK_MS = 30_000;
+/** Quiet time before the camera starts its idle orbit (spec 8.7). */
+const IDLE_ORBIT_MS = 20_000;
+const IDLE_ORBIT_SPEED = 0.4;
+/** Where the side plot for the animation speed preview stands, clear of the main site (spec 14). */
+const SIDE_SITE = new THREE.Vector3(-26, 0, 0);
 const NO_WEBGL_NOTICE = 'This browser does not support WebGL2, so the day is shown as a list.';
 
 function plural(count: number, one: string, many: string): string {
@@ -86,6 +96,11 @@ export class App {
   private settingsModal: SettingsModal | null = null;
   private pulseRunning = false;
   private directorRunning = false;
+  private ringRunning = false;
+  /** The date the app last saw as today, to notice midnight. */
+  private today = todayIso();
+  private lastInput = performance.now();
+  private sideGround: Ground | null = null;
 
   constructor(hosts: AppHosts, storage: StorageLike | null) {
     const today = todayIso();
@@ -180,6 +195,101 @@ export class App {
     if (loaded.kind === 'unreadable') this.toasts.show(PERSIST_MESSAGES.unreadable);
     this.describeCanvas();
     this.updateSampleButton();
+    this.updateNow(false);
+    this.startClock();
+    this.watchForIdle();
+  }
+
+  // Time passing
+
+  /** Catches up with the clock every 30 seconds and when the tab comes back (spec 8.6). */
+  private startClock(): void {
+    window.setInterval(() => this.tick(), CLOCK_MS);
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) this.tick();
+    });
+    window.addEventListener('focus', () => this.tick());
+  }
+
+  /**
+   * After local midnight the Today button returns and a toast offers the new
+   * day, but the viewed date stays put (spec 18).
+   */
+  private tick(): void {
+    const today = todayIso();
+    if (today !== this.today) {
+      this.today = today;
+      this.overlay.render();
+      this.toasts.show(`It is now ${formatDateTitle(today)}.`, { action: { label: 'Go to today', run: () => this.goToToday() } });
+    }
+    this.updateNow(true);
+  }
+
+  /**
+   * Places the now ring, shown only on today and inside the day window (spec
+   * 8.6), and tells the tower which minute weathering follows (spec 11.4).
+   * `animate` tweens the ring and lets newly done blocks fade; after a day
+   * change or a load both land at once.
+   */
+  private updateNow(animate: boolean): void {
+    const scene = this.scene;
+    if (!scene) return;
+    const settings = this.store.settings;
+    const minutes = nowMinutes();
+    const viewingToday = this.store.viewedDate === todayIso();
+    if (viewingToday && minutes >= settings.dayStart && minutes <= settings.dayEnd) {
+      const label = `now ${formatTimeShort(Math.floor(minutes), settings)}`;
+      scene.nowRing.show(minutesToY(minutes, settings), label, animate && !this.reducedMotion());
+    } else {
+      scene.nowRing.hide();
+    }
+    scene.tower.setNowY(scene.nowRing.y);
+    scene.tower.setNow(viewingToday && settings.weatherPastBlocks ? minutes : null, animate);
+    if (!this.ringRunning) {
+      this.ringRunning = true;
+      scene.root.addAnimator((dt) => {
+        const moving = scene.nowRing.step(dt);
+        scene.tower.setNowY(scene.nowRing.y);
+        if (!moving) this.ringRunning = false;
+        return moving;
+      });
+    }
+    scene.root.requestRender();
+  }
+
+  /**
+   * Idle orbit (spec 8.7): after 20 s with no pointer, wheel, or key input the
+   * camera slowly circles the tower. Any input stops it. It waits while a job
+   * plays or a dialog is open, and never runs under reduced motion.
+   */
+  private watchForIdle(): void {
+    const touch = () => {
+      this.lastInput = performance.now();
+      if (this.scene?.root.controls.autoRotate) this.setOrbit(false);
+    };
+    for (const type of ['pointerdown', 'pointermove', 'wheel', 'keydown', 'touchstart']) {
+      window.addEventListener(type, touch, { capture: true, passive: true });
+    }
+    window.setInterval(() => {
+      const scene = this.scene;
+      if (!scene) return;
+      const allowed =
+        this.store.settings.idleOrbit &&
+        !this.reducedMotion() &&
+        !scene.director.isBusy &&
+        !scene.picker.dragging &&
+        Dialog.openCount === 0 &&
+        !document.hidden;
+      this.setOrbit(allowed && performance.now() - this.lastInput >= IDLE_ORBIT_MS);
+    }, 1000);
+  }
+
+  private setOrbit(on: boolean): void {
+    const root = this.scene?.root;
+    if (!root || root.controls.autoRotate === on) return;
+    root.controls.autoRotateSpeed = IDLE_ORBIT_SPEED;
+    root.controls.autoRotate = on;
+    root.requestRender();
   }
 
   // Scene
@@ -227,12 +337,20 @@ export class App {
 
     tower = new Tower(this.store, ground, holds);
     tower.onChange = () => root.requestRender();
+    tower.animate = (animator) => root.addAnimator(animator);
+    const nowRing = new NowRing();
+    root.scene.add(nowRing.root);
     root.scene.add(tower.root);
     root.onBeforeRender((camera) => {
       tower.updateForCamera(camera);
+      nowRing.updateForCamera(camera);
       this.afterFrame();
     });
-    root.onViewChange(() => tower.setLabelSpace(root.labelSpace));
+    root.onViewChange(() => {
+      tower.setLabelSpace(root.labelSpace);
+      nowRing.setWorldScale(root.labelSpace.unitsPerPixel);
+    });
+    nowRing.setWorldScale(root.labelSpace.unitsPerPixel);
     root.frameTower(towerHeight(settings), false);
 
     const picker = new Picker(root, tower, ground, this.store, {
@@ -251,7 +369,7 @@ export class App {
     crew.park();
     crew.settleMast();
     root.warmUp();
-    return { root, ground, tower, picker, crew, holds, director, jobs };
+    return { root, nowRing, ground, tower, picker, crew, holds, director, jobs };
   }
 
   // Animation jobs
@@ -264,14 +382,24 @@ export class App {
     const plan = planJobs(event, this.store.viewedDate, this.ui.state.selectedId);
     if (plan.finish) director.finishAll();
     const calm = this.reducedMotion();
-    for (const job of plan.jobs) director.enqueue(this.makeJob(job, jobs, calm));
+    // The jobs of one rapid sequence share a chain, so they play in turn.
+    const chain = {};
+    for (const job of plan.jobs) {
+      const made = this.makeJob(job, jobs, calm);
+      if (job.kind === 'build' && job.sequence) made.chain = chain;
+      director.enqueue(made);
+    }
     if (director.isBusy) this.runDirector();
   }
 
   private makeJob(plan: JobPlan, scene: JobScene, calm: boolean): Job {
     switch (plan.kind) {
-      case 'build':
-        return calm ? fadeInJob(scene, plan.block) : buildJob(scene, plan.block, plan.fast);
+      case 'build': {
+        if (!calm) return buildJob(scene, plan.block, { speed: plan.speed, tight: plan.sequence });
+        const job = fadeInJob(scene, plan.block);
+        job.speed = plan.speed;
+        return job;
+      }
       case 'demolish':
         return demolishJob(scene, plan.block, calm);
       case 'resize':
@@ -300,6 +428,8 @@ export class App {
   private onDirectorChange(): void {
     const label = this.scene?.director.current?.label;
     this.overlay?.setStatus(label ? label : null);
+    // Builds are watched from a still camera (spec 8.7).
+    if (this.scene?.director.isBusy) this.setOrbit(false);
   }
 
   /** Brings the camera back to the standard framing if a new roof would be out of view (spec 9.5). */
@@ -344,14 +474,21 @@ export class App {
         this.ui.update({ selectedId: null, hoveredId: null, hoveredGapStart: null, inspector: { mode: 'closed' } });
         this.scene?.tower.setPreview(null);
         this.scene?.ground.setDate(this.store.viewedDate);
+        this.updateNow(false);
+        // The new day appears at once, then takes on its colors (spec 12.7).
+        this.scene?.tower.playSunrise();
         break;
       case 'settings':
         this.applySettings(event.previous, event.current);
+        // The ring moves with the tower when the day start changes, and
+        // turning weathering on fades the done blocks.
+        this.updateNow(true);
         break;
       case 'loaded':
         this.applySettings(null, this.store.settings);
         this.scene?.ground.setDate(this.store.viewedDate);
         this.dropMissingSelection();
+        this.updateNow(false);
         break;
       case 'blocks':
         if (event.date === this.store.viewedDate) this.dropMissingSelection();
@@ -379,7 +516,12 @@ export class App {
     }
     if (!previous || previous.dayStart !== current.dayStart || previous.dayEnd !== current.dayEnd) {
       // A new day window re-lays out the tower (done by Tower) and reframes the camera.
-      scene.root.frameTower(towerHeight(current), previous !== null && !this.reducedMotion());
+      const animate = previous !== null && !this.reducedMotion();
+      scene.root.frameTower(towerHeight(current), animate);
+      // Every block and gap slides to its new height over 0.6 s (spec 14).
+      if (animate && previous.dayStart !== current.dayStart) {
+        scene.tower.slideFrom((current.dayStart - previous.dayStart) * UNITS_PER_MINUTE);
+      }
     }
   }
 
@@ -681,7 +823,69 @@ export class App {
       clearDay: () => this.clearDay(),
       clearAll: () => this.clearAll(),
       saved: () => this.toasts.show('Settings saved.'),
+      previewSpeed: this.scene ? () => this.previewSpeed() : undefined,
     });
+  }
+
+  /**
+   * The Preview button beside the animation speed (spec 14): the settings
+   * step aside, the camera goes to an empty side plot, and the crew builds a
+   * temporary 60 minute block there at the draft speed, then clears it away.
+   * Escape or Skip ends it early. Then everything comes back as it was.
+   */
+  private previewSpeed(): void {
+    const scene = this.scene;
+    if (!scene || scene.director.isBusy) return;
+    const settings = this.store.settings;
+    const side = this.sidePlot(scene);
+    const view = scene.root.saveView();
+    this.settingsModal?.setAside(true);
+    side.root.visible = true;
+    side.setPrepared(false);
+    scene.root.frameSite(SIDE_SITE, 6);
+    scene.crew.root.position.copy(SIDE_SITE);
+    scene.crew.setTowerTop(3);
+    scene.crew.park();
+    scene.crew.settleMast();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      scene.director.skip();
+    };
+    document.addEventListener('keydown', onKey, true);
+    const block: Block = {
+      id: 'speed-preview',
+      title: '',
+      start: settings.dayStart,
+      end: settings.dayStart + 60,
+      categoryId: settings.categories[0]!.id,
+      createdAt: 0,
+    };
+    const jobs: JobScene = { ...scene.jobs, ground: side, holds: new Holds(), blocks: () => [], moreQueued: () => false, keepInFrame: () => {} };
+    const job = previewJob(jobs, block, `Previewing ${settings.animationSpeed}x speed`, () => {
+      document.removeEventListener('keydown', onKey, true);
+      scene.crew.root.position.set(0, 0, 0);
+      side.setPrepared(false);
+      side.root.visible = false;
+      scene.root.restoreView(view);
+      this.settingsModal?.setAside(false);
+    });
+    scene.director.enqueue(job);
+    this.runDirector();
+  }
+
+  /** The empty side plot and depot the speed preview builds on, made the first time it is needed. */
+  private sidePlot(scene: SceneParts): Ground {
+    if (!this.sideGround) {
+      const side = new Ground(null);
+      side.root.position.copy(SIDE_SITE);
+      side.root.visible = false;
+      scene.root.scene.add(side.root);
+      this.sideGround = side;
+    }
+    this.sideGround.setPaletteMode(this.store.settings.paletteMode);
+    return this.sideGround;
   }
 
   private listActions(): ListActions {

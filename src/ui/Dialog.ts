@@ -20,6 +20,7 @@ export class Dialog {
   private readonly panel: HTMLElement;
   private readonly opener: Element | null;
   private closed = false;
+  private asideFocus: Element | null = null;
 
   static openCount = 0;
 
@@ -80,6 +81,18 @@ export class Dialog {
 
   get isOpen(): boolean {
     return !this.closed;
+  }
+
+  /**
+   * Steps out of view and back without closing, for example while the scene
+   * previews a setting. The dialog stays open for everything else, so
+   * keyboard shortcuts stay off meanwhile.
+   */
+  setAside(aside: boolean): void {
+    if (this.closed || aside === this.backdrop.hidden) return;
+    if (aside) this.asideFocus = document.activeElement;
+    this.backdrop.hidden = aside;
+    if (!aside && this.asideFocus instanceof HTMLElement && this.asideFocus.isConnected) this.asideFocus.focus();
   }
 
   close(): void {

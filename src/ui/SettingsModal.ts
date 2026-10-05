@@ -17,6 +17,8 @@ export interface SettingsActions {
   clearDay(): void;
   clearAll(): void;
   saved(): void;
+  /** Builds a temporary block at the draft speed (spec 14). Absent without the 3D view. */
+  previewSpeed?: () => void;
 }
 
 const SWATCH_NAMES: Record<SwatchToken, string> = {
@@ -38,6 +40,7 @@ export class SettingsModal {
   private readonly dayStart: HTMLSelectElement;
   private readonly dayEnd: HTMLSelectElement;
   private readonly speedValue: HTMLOutputElement;
+  private readonly previewButton: HTMLButtonElement;
   /** A category waiting for its removal to be confirmed. */
   private confirmingRemoval: string | null = null;
 
@@ -92,8 +95,10 @@ export class SettingsModal {
       },
     });
     speed.addEventListener('input', () => this.change({ animationSpeed: Number(speed.value) }));
-    const preview = button('Preview', 'button');
-    setDisabled(preview, 'The preview arrives with the build animations.');
+    const preview = button('Preview', 'button', () => {
+      if (preview.getAttribute('aria-disabled') !== 'true') this.actions.previewSpeed?.();
+    });
+    this.previewButton = preview;
     this.renderSpeed();
     const motion = this.section(
       'Motion',
@@ -206,7 +211,23 @@ export class SettingsModal {
     this.dayEnd.value = String(this.draft.dayEnd);
   }
 
+  /** Steps aside while the scene plays the speed preview, and comes back after. */
+  setAside(aside: boolean): void {
+    this.dialog.setAside(aside);
+  }
+
   private renderSpeed(): void {
+    const calm =
+      this.draft.reducedMotion === 'on' ||
+      (this.draft.reducedMotion === 'system' && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    setDisabled(
+      this.previewButton,
+      !this.actions.previewSpeed
+        ? 'The preview needs the 3D view, which this browser cannot show.'
+        : calm
+          ? 'Reduced motion is on, so blocks fade in instead of being built.'
+          : null,
+    );
     this.speedValue.value = `${this.draft.animationSpeed}x`;
   }
 
@@ -323,7 +344,7 @@ export class SettingsModal {
     this.error.textContent = result.ok ? '' : result.error;
     this.error.hidden = result.ok;
     if (patch.timeFormat && patch.timeFormat !== before) this.fillWindowSelects();
-    if (patch.animationSpeed !== undefined) this.renderSpeed();
+    if (patch.animationSpeed !== undefined || patch.reducedMotion !== undefined) this.renderSpeed();
     if (patch.categories && rerenderCategories) this.renderCategories();
   }
 

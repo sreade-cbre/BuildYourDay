@@ -50,22 +50,29 @@ export class Ground {
   private readonly clearedBlades: number[] = [];
   /** World x of each cleared blade, for the bulldozer's pass. */
   private readonly clearedX: number[] = [];
-  private readonly sign: SiteSign;
+  private readonly sign: SiteSign | null;
   private prepared = false;
   /** True after a partial clear or fade, so setPrepared always settles the plot. */
   private partial = false;
   private palette: PaletteMode = 'strict';
 
-  constructor(sign: SignPlacement) {
-    this.root.name = 'ground';
+  /**
+   * With a sign placement this is the main site, with the wide ground plane
+   * and the date sign. Without one it is a bare side plot and depot, as the
+   * animation speed preview uses (spec 14).
+   */
+  constructor(sign: SignPlacement | null) {
+    this.root.name = sign ? 'ground' : 'side-ground';
 
     this.groundMaterial = new THREE.MeshStandardMaterial({ color: colorOf('white'), roughness: 1, metalness: 0 });
-    const ground = new THREE.Mesh(new THREE.PlaneGeometry(GROUND_SIZE, GROUND_SIZE), this.groundMaterial);
-    ground.rotation.x = -Math.PI / 2;
-    ground.position.y = GROUND_Y;
-    ground.receiveShadow = true;
-    ground.name = 'ground-plane';
-    this.root.add(ground);
+    if (sign) {
+      const ground = new THREE.Mesh(new THREE.PlaneGeometry(GROUND_SIZE, GROUND_SIZE), this.groundMaterial);
+      ground.rotation.x = -Math.PI / 2;
+      ground.position.y = GROUND_Y;
+      ground.receiveShadow = true;
+      ground.name = 'ground-plane';
+      this.root.add(ground);
+    }
 
     // The plot top is its own material so site prep can recolor it.
     this.plotTopMaterial = new THREE.MeshStandardMaterial({ color: colorOf('slateLight'), roughness: 0.95, metalness: 0 });
@@ -93,10 +100,12 @@ export class Ground {
 
     this.root.add(createDepot());
 
-    this.sign = new SiteSign();
-    this.sign.root.position.set(sign.x, PLOT_TOP_Y, sign.z);
-    this.sign.root.rotation.y = sign.facing;
-    this.root.add(this.sign.root);
+    this.sign = sign ? new SiteSign() : null;
+    if (this.sign && sign) {
+      this.sign.root.position.set(sign.x, PLOT_TOP_Y, sign.z);
+      this.sign.root.rotation.y = sign.facing;
+      this.root.add(this.sign.root);
+    }
   }
 
   private scatterGrass(): void {
@@ -199,7 +208,7 @@ export class Ground {
   }
 
   setDate(date: IsoDate): void {
-    this.sign.setText(formatDateTitle(date));
+    this.sign?.setText(formatDateTitle(date));
   }
 
   private grassToken(): 'slateLight' | 'grass' {

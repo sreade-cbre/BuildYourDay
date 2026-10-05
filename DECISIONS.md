@@ -486,3 +486,110 @@ what was decided and why. Section numbers refer to `TIME_TOWER_SPEC.md`.
     worst (95th percentile 4.7 ms), a 384 cube demolition 5.9 ms, extend
     3.9 ms, relocate 2.7 ms. With the CPU slowed four times, the worst frame
     was 10.9 ms. The 2020 laptop target itself is untested.
+
+## M5: Living tower
+
+### Time passing
+
+1. **After midnight the title keeps naming the day on screen.** Section 18
+   updates the date title to the new day while the viewed date stays put,
+   but the title names the tower under it. So the title stays, the Today
+   button appears, and a toast names the new day ("It is now Tuesday,
+   October 6.") with Go to today. The ring hides and the old day's blocks
+   lose their weathering, since that day is no longer today (section 11.4).
+2. **The ring's card.** The "now 10:40" card sits on the camera's left of
+   the ring, away from the block labels on the right, and follows the camera
+   around. It uses the chosen time format. Ring and card show from day start
+   to day end, on today only.
+3. **When a block fades.** A block that becomes done while its day is on
+   screen cross-fades over 2 s, as does one whose build ends after its end
+   time, and turning Weather past blocks on fades every done block. After a
+   load, an import, or a day change, done blocks are weathered at once; the
+   sunrise covers that change. The block under way is already weathered
+   below the ring, so when it ends it changes without a fade.
+4. **Hatched and dimmed blocks.** A block outside the day window keeps its
+   hatching, which asks for attention, and is not weathered. While a
+   category highlight dims the block under way, it is drawn whole and fresh
+   rather than split at the ring, since two translucent parts would draw
+   darker where they meet, and dimmed blocks change without a fade. Labels
+   of done blocks add "done", so weathering never relies on color alone
+   (section 17).
+5. **The sunrise plays under reduced motion.** Section 9.7 does not mention
+   it, and it is a 0.4 s color change with nothing moving. Each block fades
+   over 0.2 s, starting as the sweep reaches its base, so the lowest block
+   is first and the top block ends the sweep.
+6. **Day start slides the tower as one.** Section 14 tweens every block and
+   gap over 0.6 s when the day start changes. They all move by the same
+   amount, so the tower slides as one piece while the slab stays on the plot
+   and the camera reframes. Under reduced motion the tower and camera move
+   at once.
+7. **Idle orbit waits for quiet.** Besides section 8.7's rules, the orbit
+   waits while a dialog is open, during a drag, and while the tab is hidden.
+   Touch counts as input too.
+
+### Sequences
+
+8. **Copied days and the sample day build.** Copying a day builds its blocks
+   at 3x and the sample day at 2.5x, in time order with one crew, after
+   anything playing finishes. This replaces M2 decisions 12 and 13 and the
+   end of M4 decision 5. Clearing a day, undoing a cleared day, imports, and
+   settings stay instant.
+9. **A sequence is one chain.** Builds in a sequence do not hurry each other
+   and do not count toward the queue limit of eight (section 9.6), so a long
+   copied day plays in full. A job from outside the chain, such as a new
+   block, still hurries what is playing and the rest of the chain.
+10. **Sequences overlap their phases more.** With M3's overlaps the sample
+    day took 16.07 s at 2.5x, over section 20's 15 s. In a sequence each
+    phase starts at 80% of the one before, and the roof at 90% of cladding,
+    so the cap still lands after the facade is up. The sample day loads in
+    14.3 s (14.33 s measured in the browser).
+11. **No build runs past 9.8 s.** Section 18 gives an 8 hour block about
+    9.8 s, where M3 decision 3's table gave 11.44 s. A build that would run
+    longer at speed 1 shortens its foundation, frame, and cladding in
+    proportion, so blocks from 5 hours 20 minutes up take 9.8 s. Shorter
+    blocks keep their M3 lengths. This replaces the 8 hour total in M3
+    decision 3.
+
+### Speed preview
+
+12. **Where the preview builds.** Section 14's Preview builds a 60 minute
+    block in the first category on a bare side plot 26 units left of the
+    tower, at the slider's unsaved speed. The crew moves over for it and the
+    camera turns to it, while the settings modal steps aside without
+    closing, so unsaved settings stay. When the block is done it fades, the
+    slab sinks, and the grass grows back; then the camera, crew, and modal
+    return, with focus on Preview. Skip or Escape ends it early.
+13. **When Preview is unavailable.** Under reduced motion every build is a
+    fade, and without WebGL2 there is no scene, so Preview is disabled with
+    a note that says why.
+
+### Checked, not changed
+
+14. **Storage, palette, and imports.** Working in memory with the "Not
+    saving: storage unavailable" chip, the accents palette, and refusing
+    files from a newer version arrived with M2. M5 checked them against
+    sections 5.3, 15, and 18 and changed nothing.
+
+### Under the hood
+
+15. **The crew can move.** Machine points such as the crane hook, the
+    excavator bucket, and the truck bed are measured in the crew's own frame
+    rather than the world's, so the whole crew can work on the side plot.
+16. **Measured frame time.** On an Apple M1 Pro in headless Chrome at
+    1920 × 1080, with the GPU finishing each frame, the ring up, and the
+    block under way split at it: a stacked build 9.5 ms at worst (95th
+    percentile 2.6 ms), the sunrise 2.6 ms, and the idle orbit 9.0 ms at
+    worst while holding 60 frames a second. With the CPU slowed four times,
+    a stacked build's worst frame was 13.7 ms. The 2020 laptop target itself
+    is untested.
+17. **Thirty minutes of use.** A scripted session made 635 random changes
+    over 30 minutes: adds, demolitions, undos, moves, resizes, renames, day
+    changes, settings changes, skips, idle spells with the orbit, and copied
+    days, after one warm-up pass through every job. Read on an untouched
+    reference day every 5 minutes, the geometry count stayed at 148 or 149,
+    and the console stayed empty. Textures and shaders rose by one, once:
+    blocks outside the day window use a hatched look that is made the first
+    time one appears and then kept. Labels on hover lower the texture count
+    while they are hidden. The first attempt stalled because headless Chrome
+    on macOS repeats a synthetic key the page leaves unhandled thousands of
+    times a second, so the script sends Escape only while a job plays.

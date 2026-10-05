@@ -32,9 +32,6 @@ import { ROOF_LEAD, ROOF_LIFT, craneBatch, crewSize, panelLifts, phaseSchedule }
 // the roof arrive beside the tower and slide in, and panels hang outside the
 // scaffold.
 
-/** Undo rebuilds a block at this playback speed (spec 12.6). */
-export const FAST_BUILD_SPEED = 3;
-
 const deg = (d: number) => (d * Math.PI) / 180;
 /** Panels hang 0.07 in front of the front face, inside the scaffold. */
 const PANEL_Z = BLOCK_FOOTPRINT / 2 + 0.07;
@@ -66,15 +63,22 @@ export function endJob(scene: JobScene): void {
  * build plays. The first block of an empty day also takes the site, so the
  * plot keeps its grass until the bulldozer clears it.
  */
-export function buildJob(scene: JobScene, block: Block, fast = false): Job {
+export interface BuildOptions {
+  /** Playback speed instead of the setting, for an undo or a rapid sequence. */
+  speed?: number;
+  /** Part of a rapid sequence: phases overlap as much as spec 9.5 allows. */
+  tight?: boolean;
+}
+
+export function buildJob(scene: JobScene, block: Block, options: BuildOptions = {}): Job {
   const { holds } = scene;
   const claim = holds.claim(block.id, { pose: null, labelOpacity: HELD_LABEL_OPACITY, quiet: [] });
   const first = holds.siteMode === null && standingBlocks(scene, block.id).length === 0;
   const site = first ? holds.claimSite('build') : null;
   return {
     label: `Building ${titleOf(block)}`,
-    speed: fast ? FAST_BUILD_SPEED : undefined,
-    start: () => createBuildTimeline(scene, block, claim, first),
+    speed: options.speed,
+    start: () => createBuildTimeline(scene, block, claim, first, options.tight ?? false),
     end: () => {
       holds.release(block.id, claim);
       if (site) holds.releaseSite(site);
@@ -83,7 +87,7 @@ export function buildJob(scene: JobScene, block: Block, fast = false): Job {
   };
 }
 
-function createBuildTimeline(scene: JobScene, block: Block, claim: Claim, first: boolean): Timeline {
+function createBuildTimeline(scene: JobScene, block: Block, claim: Claim, first: boolean, tight: boolean): Timeline {
   const { crew, tower, ground } = scene;
   const { props, scaffold, crane, dust, bulldozer, excavator, mixer, hoist, rail } = crew;
   const settings = scene.settings();
@@ -94,7 +98,7 @@ function createBuildTimeline(scene: JobScene, block: Block, claim: Claim, first:
   const top = baseY + height;
   const floors = Math.max(1, Math.round(height / (settings.slotMinutes * UNITS_PER_MINUTE)));
   const floorHeight = height / floors;
-  const schedule = phaseSchedule(height, first);
+  const schedule = phaseSchedule(height, first, tight);
   const { d, at, total } = schedule;
   const minutes = block.end - block.start;
   // With blocks standing over the slot, loads come in from the side.
@@ -184,7 +188,7 @@ function createBuildTimeline(scene: JobScene, block: Block, claim: Claim, first:
     const bucket = new THREE.Vector3();
     for (const cycle of [0, 1]) {
       for (const [share, count] of [[0.25, 30], [0.68, 44]] as const) {
-        c.at(digStart + (digLength / 2) * (cycle + share), () => dust.puff(excavator.bucketWorld(bucket), rng, count, 0.6));
+        c.at(digStart + (digLength / 2) * (cycle + share), () => dust.puff(excavator.bucketPoint(bucket), rng, count, 0.6));
       }
     }
     const mixerIn = new Path([HOMES.mixer, WORK_SPOTS.mixer]);

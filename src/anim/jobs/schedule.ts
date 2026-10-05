@@ -25,18 +25,47 @@ export function phaseDurations(height: number, first: boolean) {
   };
 }
 
-/** Phase start times, with the small overlaps from spec 9.5, and the total. */
-export function phaseSchedule(height: number, first: boolean) {
-  const d = phaseDurations(height, first);
+/** No build runs longer than this at speed 1; spec 18 has an 8 hour block take about 9.8 s. */
+export const MAX_BUILD_SECONDS = 9.8;
+
+type Durations = ReturnType<typeof phaseDurations>;
+
+/**
+ * How far each phase runs before the next begins (spec 9.5 allows up to 20%
+ * overlap). A single build overlaps a little where it reads naturally; a
+ * rapid sequence, such as the sample day, takes nearly all of the allowance.
+ * The roof always waits until the facade is nearly done.
+ */
+const OVERLAPS = {
+  usual: { survey: 0.9, prep: 0.9, foundation: 1, frame: 0.85, scaffold: 1, cladding: 1, roof: 0.9 },
+  tight: { survey: 0.8, prep: 0.8, foundation: 0.8, frame: 0.8, scaffold: 0.8, cladding: 0.9, roof: 0.8 },
+} as const;
+
+function layout(d: Durations, tight: boolean) {
+  const o = OVERLAPS[tight ? 'tight' : 'usual'];
   const survey = 0;
-  const prep = survey + d.survey * 0.9;
-  const foundation = prep + d.prep * 0.9;
-  const frame = foundation + d.foundation;
-  const scaffold = frame + d.frame * 0.85;
-  const cladding = scaffold + d.scaffold;
-  const roof = cladding + d.cladding;
-  const cleanup = roof + d.roof * 0.9;
+  const prep = survey + d.survey * o.survey;
+  const foundation = prep + d.prep * o.prep;
+  const frame = foundation + d.foundation * o.foundation;
+  const scaffold = frame + d.frame * o.frame;
+  const cladding = scaffold + d.scaffold * o.scaffold;
+  const roof = cladding + d.cladding * o.cladding;
+  const cleanup = roof + d.roof * o.roof;
   return { d, at: { survey, prep, foundation, frame, scaffold, cladding, roof, cleanup }, total: cleanup + d.cleanup };
+}
+
+/**
+ * Phase start times and the total. Very long blocks compress their
+ * foundation, frame, and cladding so no build passes MAX_BUILD_SECONDS.
+ */
+export function phaseSchedule(height: number, first: boolean, tight = false) {
+  const d = phaseDurations(height, first);
+  const schedule = layout(d, tight);
+  if (schedule.total <= MAX_BUILD_SECONDS) return schedule;
+  const o = OVERLAPS[tight ? 'tight' : 'usual'];
+  const scaled = d.foundation * o.foundation + d.frame * o.frame + d.cladding * o.cladding;
+  const k = (MAX_BUILD_SECONDS - (schedule.total - scaled)) / scaled;
+  return layout({ ...d, foundation: d.foundation * k, frame: d.frame * k, cladding: d.cladding * k }, tight);
 }
 
 /** Crew size from spec 10.1; a block under 15 minutes gets one worker (spec 18). */

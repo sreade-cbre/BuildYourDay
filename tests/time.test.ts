@@ -12,6 +12,7 @@ import {
   formatTimeShort,
   isIsoDate,
   isOnSlot,
+  nowMinutes,
   snapToSlot,
   toIsoDate,
 } from '../src/core/time';
@@ -149,5 +150,13 @@ describe('dates', () => {
   it('uses local time, not UTC', () => {
     expect(toIsoDate(new Date(2026, 9, 5, 0, 1))).toBe('2026-10-05');
     expect(toIsoDate(new Date(2026, 9, 5, 23, 59))).toBe('2026-10-05');
+  });
+});
+
+describe('nowMinutes', () => {
+  it('counts minutes since local midnight, seconds as a fraction', () => {
+    expect(nowMinutes(new Date(2026, 9, 5, 0, 0, 0))).toBe(0);
+    expect(nowMinutes(new Date(2026, 9, 5, 10, 40, 30))).toBeCloseTo(640.5);
+    expect(nowMinutes(new Date(2026, 9, 5, 23, 59, 0))).toBe(1439);
   });
 });

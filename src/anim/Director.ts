@@ -14,6 +14,12 @@ export interface Job {
   end(): void;
   /** Plays at this speed instead of the animation speed setting, for example 3 for an undo (spec 12.6). */
   speed?: number;
+  /**
+   * Jobs that share a chain, such as the rapid build of a copied day, play in
+   * turn without hurrying each other (spec 12.8 and 20). Anything else that
+   * arrives still hurries the whole chain.
+   */
+  chain?: object;
 }
 
 /** Wall seconds a running job gets to finish when another job arrives. */
@@ -49,9 +55,13 @@ export class Director {
   }
 
   enqueue(job: Job): void {
-    this.active?.timeline.fastForwardTo(this.active.timeline.duration, FAST_FORWARD_SECONDS);
+    const active = this.active;
+    if (active && !(job.chain && active.job.chain === job.chain)) {
+      active.timeline.fastForwardTo(active.timeline.duration, FAST_FORWARD_SECONDS);
+    }
     this.queue.push(job);
-    while (this.queue.length > MAX_QUEUE) this.queue.shift()!.end();
+    // A chain is one action, so it does not count against the queue limit.
+    if (!job.chain) while (this.queue.length > MAX_QUEUE) this.queue.shift()!.end();
     this.notify();
   }
 
@@ -105,8 +115,10 @@ export class Director {
     const timeline = job.start();
     this.active = { job, timeline };
     timeline.play(this.speedOf(job));
-    // Another job is already waiting, so this one gets the short version too.
-    if (this.queue.length > 0) timeline.fastForwardTo(timeline.duration, FAST_FORWARD_SECONDS);
+    // Another job is already waiting, so this one gets the short version too,
+    // unless all that waits is the rest of its own chain.
+    const onlyChain = job.chain !== undefined && this.queue.every((next) => next.chain === job.chain);
+    if (this.queue.length > 0 && !onlyChain) timeline.fastForwardTo(timeline.duration, FAST_FORWARD_SECONDS);
     this.notify();
   }
 
