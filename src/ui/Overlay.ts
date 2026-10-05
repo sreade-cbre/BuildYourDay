@@ -21,6 +21,8 @@ export interface OverlayActions {
   exportJson(): void;
   importJson(): void;
   clearDay(): void;
+  /** The Skip link on the status chip (spec 9.6). */
+  skip(): void;
 }
 
 export const DAY_FULL_MESSAGE = 'The day is full.';
@@ -36,6 +38,8 @@ export class Overlay {
   private readonly copyItem: HTMLButtonElement;
   private readonly clearItem: HTMLButtonElement;
   private readonly storageChip: HTMLElement;
+  private readonly statusChip: HTMLElement;
+  private readonly statusText: HTMLElement;
   private readonly unsubscribe: () => void;
 
   constructor(
@@ -105,9 +109,18 @@ export class Overlay {
     );
 
     const bar = h('header', { class: 'top-bar panel' }, dateNav, this.totalsLine, h('div', { class: 'top-bar__spacer' }), actionsGroup);
-    this.storageChip = h('div', { class: 'chip chip--warning', text: PERSIST_MESSAGES.storageUnavailable, attrs: { role: 'status' } });
+    this.storageChip = h('div', { class: 'chip chip--warning chip--top', text: PERSIST_MESSAGES.storageUnavailable, attrs: { role: 'status' } });
     this.storageChip.hidden = true;
-    host.append(listButton, bar, this.storageChip);
+    // While a job plays: "Building Pay app review" with a Skip link (spec 13.4).
+    this.statusText = h('span', { class: 'chip__text' });
+    this.statusChip = h(
+      'div',
+      { class: 'chip chip--status', attrs: { role: 'status' } },
+      this.statusText,
+      button('Skip', 'button button--link', () => actions.skip()),
+    );
+    this.statusChip.hidden = true;
+    host.append(listButton, bar, this.storageChip, this.statusChip);
 
     document.addEventListener('pointerdown', this.onDocumentPointer, true);
     this.unsubscribe = store.subscribe(() => this.render());
@@ -182,6 +195,12 @@ export class Overlay {
 
   setStorageWarning(visible: boolean): void {
     this.storageChip.hidden = !visible;
+  }
+
+  /** Shows what is being built, or hides the chip with null. */
+  setStatus(label: string | null): void {
+    this.statusChip.hidden = !label;
+    if (label) this.statusText.textContent = `${label}\u2026`;
   }
 
   render(): void {

@@ -1,3 +1,6 @@
+import * as THREE from 'three';
+import { Director } from './anim/Director';
+import { buildJob, fadeInJob, instantJob, type JobScene } from './anim/jobs/build';
 import { LIMITS, sampleBlocks } from './core/defaults';
 import { defaultNewRange, gapDraftRange, resizeLimits, totals, towerHeight } from './core/layout';
 import type { BlockId, CategoryId, Settings, TimeRange } from './core/model';
@@ -12,7 +15,9 @@ import {
 } from './core/persist';
 import { MESSAGES, Store, type BlockPatch, type StoreEvent } from './core/store';
 import { addDays, ceilToSlot, clamp, floorToSlot, formatDateTitle, formatDurationLong, todayIso } from './core/time';
+import { Crew } from './scene/crew/Crew';
 import { Ground } from './scene/Ground';
+import { Holds } from './scene/holds';
 import { materials } from './scene/materials';
 import { Picker } from './scene/Picker';
 import { DEFAULT_AZIMUTH, SceneRoot } from './scene/SceneRoot';
@@ -46,6 +51,10 @@ interface SceneParts {
   ground: Ground;
   tower: Tower;
   picker: Picker;
+  crew: Crew;
+  holds: Holds;
+  director: Director;
+  jobs: JobScene;
 }
 
 const GAP_TOO_SHORT = 'That gap is shorter than one slot, so pick a longer gap.';
@@ -70,6 +79,7 @@ export class App {
   private listDialog: { dialog: Dialog; view: ListView } | null = null;
   private settingsModal: SettingsModal | null = null;
   private pulseRunning = false;
+  private directorRunning = false;
 
   constructor(hosts: AppHosts, storage: StorageLike | null) {
     const today = todayIso();
@@ -104,6 +114,7 @@ export class App {
         exportJson: () => this.exportJson(),
         importJson: () => this.importJson(),
         clearDay: () => this.clearDay(),
+        skip: () => this.scene?.director.skip(),
       },
       todayIso,
       { scene: this.scene !== null },
@@ -175,7 +186,31 @@ export class App {
     ground.setDate(this.store.viewedDate);
     root.scene.add(ground.root);
 
-    const tower = new Tower(this.store, ground);
+    const holds = new Holds();
+    const director = new Director(() => this.store.settings.animationSpeed);
+    const crew = new Crew();
+    root.scene.add(crew.root);
+    materials.setPaletteMode(settings.paletteMode);
+    let tower: Tower | null = null;
+    const jobs: JobScene = {
+      crew,
+      ground,
+      holds,
+      get tower(): Tower {
+        return tower!;
+      },
+      settings: () => this.store.settings,
+      moreQueued: () => director.queued > 0,
+      keepInFrame: (topY) => this.keepInFrame(topY),
+      requestRender: () => root.requestRender(),
+    };
+    // Jobs are planned before the Tower hears of a change, so a new block is
+    // already held when the Tower first draws it.
+    this.store.subscribe((event) => this.planJobs(event, director, jobs));
+    director.onChange(() => this.onDirectorChange());
+    root.onShow(() => director.finishAll());
+
+    tower = new Tower(this.store, ground, holds);
     tower.onChange = () => root.requestRender();
     root.scene.add(tower.root);
     root.onBeforeRender((camera) => {
@@ -197,7 +232,67 @@ export class App {
       },
       stepEnd: (id, slots) => this.stepEnd(id, slots),
     });
-    return { root, ground, tower, picker };
+    crew.setTowerTop(tower.topY);
+    crew.park();
+    root.warmUp();
+    return { root, ground, tower, picker, crew, holds, director, jobs };
+  }
+
+  // Animation jobs
+
+  /**
+   * Turns store changes into jobs (spec 9.2 and 9.6). The first block added
+   * to an empty day gets the full build, or a fade under reduced motion.
+   * Anything that changes the scene underneath a job finishes it first.
+   */
+  private planJobs(event: StoreEvent, director: Director, jobs: JobScene): void {
+    if (event.type !== 'blocks') {
+      director.finishAll();
+      return;
+    }
+    if (event.date !== this.store.viewedDate) return;
+    // Renaming leaves the build running; anything that moves or removes a block does not.
+    if (event.changes.some((c) => c.kind !== 'added' && c.kind !== 'retitled')) director.finishAll();
+    const added = event.changes.filter((c) => c.kind === 'added').map((c) => c.block);
+    if (added.length === 0) return;
+    for (const block of added) {
+      const first = this.store.blocks.length === added.length && !director.isBusy;
+      if (event.origin === 'user' && first) {
+        const token = this.store.categoryFor(block).color;
+        director.enqueue(this.reducedMotion() ? fadeInJob(jobs, block, token) : buildJob(jobs, block, token));
+      } else if (director.isBusy) {
+        // Wait in line so blocks appear in the order they were added.
+        director.enqueue(instantJob(jobs, block));
+      }
+    }
+    if (director.isBusy) this.runDirector();
+  }
+
+  /** Ticks the Director every frame while it has work or dust is still settling. */
+  private runDirector(): void {
+    const scene = this.scene;
+    if (!scene || this.directorRunning) return;
+    this.directorRunning = true;
+    scene.root.addAnimator((dt) => {
+      scene.director.tick(dt);
+      const dusty = scene.crew.update(dt * this.store.settings.animationSpeed);
+      const busy = scene.director.isBusy || dusty;
+      if (!busy) this.directorRunning = false;
+      return busy;
+    });
+  }
+
+  private onDirectorChange(): void {
+    const label = this.scene?.director.current?.label;
+    this.overlay?.setStatus(label ? label : null);
+  }
+
+  /** Brings the camera back to the standard framing if a new roof would be out of view (spec 9.5). */
+  private keepInFrame(topY: number): void {
+    const root = this.scene?.root;
+    if (!root) return;
+    const corners = [-2, 2].flatMap((x) => [-2, 2].map((z) => new THREE.Vector3(x, topY, z)));
+    if (!root.pointsInView(corners)) root.frameTower(towerHeight(this.store.settings), true, 1.0);
   }
 
   /** Runs before each frame renders: keeps overlay pieces tied to the scene current. */
@@ -247,6 +342,11 @@ export class App {
         if (event.date === this.store.viewedDate) this.dropMissingSelection();
         break;
     }
+    const scene = this.scene;
+    if (scene && !scene.director.isBusy) {
+      scene.crew.setTowerTop(scene.tower.topY);
+      scene.crew.park();
+    }
     this.describeCanvas();
     this.updateSampleButton();
     this.scene?.root.requestRender();
@@ -257,7 +357,10 @@ export class App {
     if (!previous || previous.theme !== current.theme) this.applyTheme(current.theme, previous !== null);
     const scene = this.scene;
     if (!scene) return;
-    if (!previous || previous.paletteMode !== current.paletteMode) scene.ground.setPaletteMode(current.paletteMode);
+    if (!previous || previous.paletteMode !== current.paletteMode) {
+      scene.ground.setPaletteMode(current.paletteMode);
+      materials.setPaletteMode(current.paletteMode);
+    }
     if (!previous || previous.dayStart !== current.dayStart || previous.dayEnd !== current.dayEnd) {
       // A new day window re-lays out the tower (done by Tower) and reframes the camera.
       scene.root.frameTower(towerHeight(current), previous !== null && !this.reducedMotion());
@@ -437,6 +540,10 @@ export class App {
 
   private escape(): boolean {
     if (this.scene?.picker.cancelDrag()) return true;
+    if (this.scene?.director.isBusy) {
+      this.scene.director.skip();
+      return true;
+    }
     if (this.overlay.menuOpen) {
       this.overlay.closeMenu(true);
       return true;
@@ -550,6 +657,7 @@ export class App {
 
   openSettings(): void {
     if (this.settingsModal?.isOpen || Dialog.openCount > 0) return;
+    this.scene?.director.finishAll();
     this.select(null);
     this.settingsModal = new SettingsModal(this.overlayHost, this.store, {
       exportJson: () => this.exportJson(),

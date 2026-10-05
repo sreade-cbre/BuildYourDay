@@ -48,8 +48,12 @@ export class Ground {
   private readonly grassMaterial: THREE.MeshStandardMaterial;
   private readonly bladeMatrices: Float32Array;
   private readonly clearedBlades: number[] = [];
+  /** World x of each cleared blade, for the bulldozer's pass. */
+  private readonly clearedX: number[] = [];
   private readonly sign: SiteSign;
   private prepared = false;
+  /** True after a partial clear or fade, so setPrepared always settles the plot. */
+  private partial = false;
   private palette: PaletteMode = 'strict';
 
   constructor(sign: SignPlacement) {
@@ -110,7 +114,10 @@ export class Ground {
       scale.set(1, randomRange(rng, 0.7, 1.3), 1);
       matrix.compose(position, rotation, scale);
       this.grass.setMatrixAt(i, matrix);
-      if (Math.abs(position.z) < CLEARED_HALF_WIDTH) this.clearedBlades.push(i);
+      if (Math.abs(position.z) < CLEARED_HALF_WIDTH) {
+        this.clearedBlades.push(i);
+        this.clearedX.push(position.x);
+      }
     }
     this.grass.instanceMatrix.needsUpdate = true;
   }
@@ -120,8 +127,9 @@ export class Ground {
    * grass. A day with any block has a prepared site.
    */
   setPrepared(prepared: boolean): void {
-    if (prepared === this.prepared) return;
+    if (prepared === this.prepared && !this.partial) return;
     this.prepared = prepared;
+    this.partial = false;
     const hidden = new THREE.Matrix4().makeScale(0, 0, 0);
     const array = this.grass.instanceMatrix.array as Float32Array;
     for (const i of this.clearedBlades) {
@@ -130,6 +138,39 @@ export class Ground {
     }
     this.grass.instanceMatrix.needsUpdate = true;
     this.plotTopMaterial.color.copy(colorOf(prepared ? 'slatePale' : this.grassToken()));
+  }
+
+  /**
+   * Clears grass behind a moving bulldozer blade (spec 9.4 phase 1): blades in
+   * the cleared strip with x above `frontX` shrink away. setPrepared settles
+   * the final state.
+   */
+  setClearFront(frontX: number): void {
+    this.partial = true;
+    const shrink = 0.6;
+    const matrix = new THREE.Matrix4();
+    const scale = new THREE.Matrix4();
+    this.clearedBlades.forEach((index, i) => {
+      const past = (this.clearedX[i]! - frontX) / shrink;
+      const keep = Math.min(1, Math.max(0, 1 - past));
+      matrix.fromArray(this.bladeMatrices, index * 16);
+      if (keep < 1) {
+        // Shrink toward the blade's base.
+        const x = matrix.elements[12]!;
+        const y = matrix.elements[13]!;
+        const z = matrix.elements[14]!;
+        scale.makeTranslation(x, y, z).multiply(new THREE.Matrix4().makeScale(keep, keep, keep)).multiply(new THREE.Matrix4().makeTranslation(-x, -y, -z));
+        matrix.premultiply(scale);
+      }
+      this.grass.setMatrixAt(index, matrix);
+    });
+    this.grass.instanceMatrix.needsUpdate = true;
+  }
+
+  /** Plot top from grass (0) to bare earth (1), for site prep. */
+  setPrepFade(t: number): void {
+    this.partial = true;
+    this.plotTopMaterial.color.copy(colorOf(this.grassToken())).lerp(colorOf('slatePale'), t);
   }
 
   setPaletteMode(mode: PaletteMode): void {

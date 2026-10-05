@@ -246,6 +246,15 @@ class MaterialLibrary {
     );
   }
 
+  /** Worker vests: blue in strict mode, hiVis in accents mode (spec 5.3). */
+  vest(): THREE.MeshStandardMaterial {
+    return this.shared('vest', () => new THREE.MeshStandardMaterial({ color: colorOf('blue'), roughness: 0.8, metalness: 0 }));
+  }
+
+  setPaletteMode(mode: 'strict' | 'accents'): void {
+    this.vest().color.copy(colorOf(mode === 'accents' ? 'hiVis' : 'blue'));
+  }
+
   /** Number of shared materials, for the debug overlay. */
   get count(): number {
     return this.cache.size;

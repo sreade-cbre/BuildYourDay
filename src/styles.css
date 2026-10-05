@@ -646,13 +646,41 @@ h3 {
   pointer-events: auto;
 }
 
+.chip--top {
+  top: 92px;
+  bottom: auto;
+}
+
+.chip--status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 6px 4px 14px;
+  border-color: var(--blue);
+  color: var(--heading);
+}
+
 .chip--warning {
   border-color: var(--navy);
   color: var(--heading);
   font-weight: bold;
 }
 
-:root[data-theme='dark'] .chip--warning {
+:root[data-theme='dark'] .chip--top {
+  top: 92px;
+  bottom: auto;
+}
+
+.chip--status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 6px 4px 14px;
+  border-color: var(--blue);
+  color: var(--heading);
+}
+
+.chip--warning {
   border-color: var(--blueLight);
 }
 

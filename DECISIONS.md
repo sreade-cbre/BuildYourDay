@@ -273,3 +273,96 @@ what was decided and why. Section numbers refer to `TIME_TOWER_SPEC.md`.
     counts from section 16 now, since they help check edits for leaks.
 27. **Without WebGL2.** The list view is the page (section 17) with a notice;
     the inspector still opens from N or Add block, and everything else works.
+
+## M3: First build animation
+
+### Timing
+
+1. **Phase lengths win over travel speeds.** Section 10.3 moves machines at
+   2.5 units per second and section 10.2 walks workers at 1.2, but the
+   bulldozer's pass is 14 units long and site prep lasts 0.6 s. Every move
+   takes the time its phase allows, so the site reads as a time lapse.
+   Machines still ease in and out.
+2. **Dig cycles compressed.** Section 10.3 gives 1.2 s per dig cycle and
+   phase 2 asks for two, but a 60 minute block's foundation lasts 0.8 s. Both
+   cycles run in the middle half of the foundation phase.
+3. **The phase table wins over Appendix A.** Appendix A's totals cannot come
+   from the 9.4 table: its 15 minute total is 3.5 s, while the minimum
+   durations alone add up to 5.1 s. The 9.4 table sets every length, with
+   small overlaps from 9.5: prep starts at 90% of survey, foundation at 90% of
+   prep, scaffold at 85% of frame, and cleanup at 90% of roof. Totals at speed
+   1: 15 minutes 4.8 s, 60 minutes 5.74 s, 4 hours 8.86 s, 8 hours 11.44 s.
+   Timing lives in `src/anim/jobs/schedule.ts`, away from three, so it is
+   unit tested.
+4. **Lifts, not floors, set the crane's pace.** Phase 3 batches beams two
+   floors at a time above six floors, which still means 16 lifts in 3.4 s at
+   8 hours, and a 30 minute block at 5 minute slots would get lifts of 0.14 s.
+   The crane lifts one floor at a time where time allows, never more than six
+   times, and never for less than 0.3 s; otherwise floors are grouped evenly.
+   Section 18's "F capped for beam batching" points the same way. Cladding
+   panels follow the same rule, one plate per group of floors.
+5. **Panels land as the plane reaches them.** Each panel lift lands as the
+   clipping plane reaches the bottom of its floors, and the plate fades as the
+   plane passes. A lift never starts before the frame's last lift is done and
+   always ends before the roof lift, so the crane never has two loads at once.
+   A test checks this for every block length and slot size.
+
+### Look
+
+6. **Label at 45% while building.** Section 9.5 updates the label at the start
+   of phase 0, while phase 7 fades it in. The label appears at once at 45%
+   opacity and fades to full during cleanup.
+7. **Planks on the faces the camera sees.** Phase 4 puts planks on the front
+   and right faces, but the default camera looks at the front and left faces,
+   so the planks and the workers on them go there.
+8. **Up to three workers on the scaffold.** Phase 4 asks for three, but a crew
+   of two or three has fewer builders besides the surveyor, so the scaffold
+   gets as many as the crew has.
+9. **One worker under 15 minutes.** Section 10.1's crew formula gives any
+   short block two workers, while section 18 gives a 5 minute block one.
+   Blocks under 15 minutes get one worker who surveys, screeds, and clads.
+10. **Machines stay in view.** The bulldozer, excavator, and mixer park on the
+    depot facing the plot between jobs. The mixer parks cab out so it can
+    back toward the slab. The crane always stands at the depot's plot side.
+11. **The bulldozer goes home behind the tower.** After its pass it returns
+    along a lane behind the tower, so no machine path crosses the tower, the
+    excavator, or the mixer.
+12. **Worker proportions.** The parts in section 10.1 stack to 0.71 units, so
+    the worker is built at that size and scaled to 0.55.
+13. **The facade is a shell.** The clipped copy of the block draws its inner
+    faces, so the cut reads as a building going up rather than a see-through
+    box. The frame retires as the facade covers it: the block body draws with
+    a polygon offset, which would let a beam slightly inside it show through at
+    grazing angles.
+
+### Director and interruptions
+
+14. **Only the first block animates in M3.** Any other new block waits its
+    turn and appears without animation, in order, until stacked builds arrive
+    in M4. Undo, the sample day, copying a day, and imports appear at once.
+15. **What finishes a build.** Renaming the block leaves the build running.
+    Any other edit to the day, opening settings, changing days, loading data,
+    and returning to a hidden tab finish it at once (9.6).
+16. **Status chip.** While a job runs, a chip at the bottom center names it,
+    with a Skip button. The storage notice moved to the top to make room.
+    Escape cancels a drag first, then skips a running job, then does what it
+    did before.
+17. **Reframing.** When a new roof would be out of view, the camera tweens to
+    the standard framing over the job's first second (9.5).
+
+### Performance
+
+18. **Shaders compile at startup.** Cloning materials per job made every
+    build compile five shaders mid animation, one frame taking up to 31 ms.
+    The facade and panel materials now live as long as the site and are
+    recolored per job, a hidden label keeps the label shader alive on days
+    with no blocks, and the renderer compiles every material, hidden ones
+    included, once the scene is built. A build compiles nothing after that,
+    except the shadow variant of the clipped facade on the first build, which
+    three compiles only when it is first drawn.
+19. **Measured frame time.** Section 16's target is a 2020 integrated GPU
+    laptop at 1920 × 1080. Measured on an Apple M1 Pro in headless Chrome at
+    1920 × 1080: 95th percentile 3.4 to 3.9 ms, worst 12.8 ms (the one shadow
+    compile). With the CPU slowed four times: 95th percentile 8.0 ms, worst
+    13.9 ms. The GPU could not be slowed, so the target hardware itself is
+    untested.

@@ -38,6 +38,8 @@ export class BlockMesh {
   /** Roof cap, set into the top of the block in the category's dark variant. */
   readonly cap: THREE.Mesh;
   private appearance: BlockAppearance;
+  /** Set when outside materials are in use, so the next appearance applies in full. */
+  private appearanceStale = false;
   private heightValue = 1;
 
   constructor(readonly blockId: BlockId, token: SwatchToken) {
@@ -81,7 +83,8 @@ export class BlockMesh {
 
   /** Picks the shared materials for a look. Cheap to call every sync. */
   setAppearance(next: BlockAppearance): void {
-    if (sameAppearance(next, this.appearance)) return;
+    if (!this.appearanceStale && sameAppearance(next, this.appearance)) return;
+    this.appearanceStale = false;
     this.appearance = { ...next };
     const variant = next.dimmed ? 'dimmed' : 'normal';
     // A hatched block reads as slateLight, whatever its category.
@@ -92,6 +95,17 @@ export class BlockMesh {
     // Translucent boxes should not shade the blocks around them.
     this.body.castShadow = !next.dimmed;
     this.cap.castShadow = !next.dimmed;
+  }
+
+  /**
+   * Uses materials outside the shared set, for example the clipped copy a
+   * build animates. The next setAppearance call restores the shared ones.
+   */
+  useMaterials(body: THREE.Material, edges: THREE.Material, cap: THREE.Material): void {
+    this.body.material = body;
+    this.edges.material = edges;
+    this.cap.material = cap;
+    this.appearanceStale = true;
   }
 
   /** Removes the block from the scene. Geometry and materials are shared, so nothing is freed. */

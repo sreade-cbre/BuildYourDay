@@ -49,6 +49,7 @@ export class SceneRoot {
   private readonly animators = new Set<Animator>();
   private readonly renderHooks = new Set<(camera: THREE.Camera) => void>();
   private readonly viewHooks = new Set<() => void>();
+  private readonly showHooks = new Set<() => void>();
   private readonly resizeObserver: ResizeObserver;
   private readonly raycaster = new THREE.Raycaster();
   private cameraTween: Animator | null = null;
@@ -71,6 +72,8 @@ export class SceneRoot {
     this.renderer.shadowMap.enabled = true;
     // r186 removed PCFSoftShadowMap; PCFShadowMap is its soft filtered successor.
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    // Builds reveal their facade with a clipping plane (spec 9.4 phase 5).
+    this.renderer.localClippingEnabled = true;
     this.renderer.domElement.setAttribute('role', 'img');
     host.appendChild(this.renderer.domElement);
 
@@ -174,6 +177,15 @@ export class SceneRoot {
 
   // Rendering
 
+  /**
+   * Compiles every material in the scene, hidden ones included, so the crew's
+   * first appearance does not stall frames on shader compiles. Runs in the
+   * background where the browser supports parallel compiles.
+   */
+  warmUp(): void {
+    void this.renderer.compileAsync(this.scene, this.camera);
+  }
+
   requestRender(): void {
     this.needsRender = true;
     this.schedule();
@@ -193,6 +205,21 @@ export class SceneRoot {
   /** Runs when the viewport size or default framing changes. */
   onViewChange(hook: () => void): void {
     this.viewHooks.add(hook);
+  }
+
+  /** Runs when a hidden tab becomes visible again. */
+  onShow(hook: () => void): void {
+    this.showHooks.add(hook);
+  }
+
+  /** True when every point projects inside the viewport. */
+  pointsInView(points: readonly THREE.Vector3[]): boolean {
+    this.camera.updateMatrixWorld();
+    const v = new THREE.Vector3();
+    return points.every((point) => {
+      v.copy(point).project(this.camera);
+      return Math.abs(v.x) <= 1 && Math.abs(v.y) <= 1 && v.z < 1;
+    });
   }
 
   private schedule(): void {
@@ -226,6 +253,7 @@ export class SceneRoot {
       this.frameId = 0;
       this.lastFrame = 0;
     } else {
+      for (const hook of this.showHooks) hook();
       this.requestRender();
     }
   };
@@ -261,7 +289,7 @@ export class SceneRoot {
    * jump as blocks are added), keeping 15% of the viewport clear above and
    * below. Tweens over 0.8 s when `animate` is true.
    */
-  frameTower(towerHeight: number, animate: boolean): void {
+  frameTower(towerHeight: number, animate: boolean, seconds = FRAME_TWEEN_SECONDS): void {
     this.towerHeight = towerHeight;
     this.defaultDistance = this.fitDistance(towerHeight);
     // The spec's 80 unit limit cannot frame very long day windows, so the
@@ -272,7 +300,7 @@ export class SceneRoot {
     const target = this.framingTarget(towerHeight);
     const to = new THREE.Spherical(this.defaultDistance, DEFAULT_POLAR, DEFAULT_AZIMUTH);
     if (animate) {
-      this.tweenCamera(target, to);
+      this.tweenCamera(target, to, seconds);
     } else {
       this.stopCameraTween();
       this.controls.target.copy(target);
@@ -334,7 +362,7 @@ export class SceneRoot {
     return high;
   }
 
-  private tweenCamera(target: THREE.Vector3, to: THREE.Spherical): void {
+  private tweenCamera(target: THREE.Vector3, to: THREE.Spherical, seconds: number): void {
     this.stopCameraTween();
     const fromTarget = this.controls.target.clone();
     const from = new THREE.Spherical().setFromVector3(this.camera.position.clone().sub(fromTarget));
@@ -345,7 +373,7 @@ export class SceneRoot {
     let elapsed = 0;
     const tween: Animator = (dt) => {
       elapsed += dt;
-      const t = Math.min(1, elapsed / FRAME_TWEEN_SECONDS);
+      const t = Math.min(1, elapsed / seconds);
       const k = easeInOutCubic(t);
       this.controls.target.lerpVectors(fromTarget, target, k);
       current.set(

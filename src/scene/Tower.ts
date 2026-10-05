@@ -16,6 +16,7 @@ import { BlockMesh } from './BlockMesh';
 import { Foundation } from './Foundation';
 import { GapMesh } from './GapMesh';
 import type { Ground } from './Ground';
+import type { Holds } from './holds';
 import { Label, type LabelText } from './Label';
 import { DIMMED_OPACITY, materials } from './materials';
 import type { LabelSpace } from './SceneRoot';
@@ -96,6 +97,11 @@ export class Tower {
   private gaps: GapMesh[] = [];
   private gapKey = '';
   private readonly foundation = new Foundation();
+  /**
+   * Never drawn. Keeps the label shader program alive while the viewed day
+   * has no labels, so a day's first label does not stall a frame compiling it.
+   */
+  private readonly keeper = new Label();
   private readonly leaderGeometry = new THREE.BufferGeometry();
   private readonly leaders: THREE.LineSegments;
   private readonly outline: THREE.LineSegments;
@@ -106,9 +112,10 @@ export class Tower {
   private decor: TowerDecor = NO_DECOR;
   private preview: TowerPreview | null = null;
   private topId: BlockId | null = null;
+  private topYValue = 0;
   private readonly unsubscribe: () => void;
 
-  constructor(private readonly store: Store, private readonly ground: Ground) {
+  constructor(private readonly store: Store, private readonly ground: Ground, private readonly holds: Holds) {
     this.root.name = 'tower';
     this.root.add(this.foundation.root);
 
@@ -130,7 +137,10 @@ export class Tower {
     this.ghost.visible = false;
     this.ghost.renderOrder = 5;
 
-    this.root.add(this.leaders, this.outline, this.ghost);
+    this.keeper.setText({ title: ' ', detail: ' ' });
+    this.keeper.sprite.visible = false;
+
+    this.root.add(this.leaders, this.outline, this.ghost, this.keeper.sprite);
     this.unsubscribe = store.subscribe((event) => this.onStoreEvent(event));
     this.sync();
   }
@@ -155,6 +165,18 @@ export class Tower {
     return this.topId;
   }
 
+  /** World height of the tower's highest roof, or 0 for an empty day. */
+  get topY(): number {
+    return this.topYValue;
+  }
+
+  /** Fades a held block's label, for a job's last moments (spec 9.4 phase 7). */
+  setHeldLabelOpacity(id: BlockId, opacity: number): void {
+    this.holds.setLabelOpacity(id, opacity);
+    this.views.get(id)?.label.setOpacity(opacity);
+    this.onChange?.();
+  }
+
   /** Blocks for the viewed day with any preview times applied. */
   private effectiveBlocks(): Block[] {
     const times = this.preview?.times;
@@ -173,6 +195,7 @@ export class Tower {
     const { selectedId, hoveredId, highlightedCategory } = this.decor;
     let topEnd = -Infinity;
     this.topId = null;
+    this.topYValue = 0;
 
     for (const block of blocks) {
       live.add(block.id);
@@ -198,15 +221,19 @@ export class Tower {
 
       const category = this.store.categoryFor(block);
       const dimmed = highlightedCategory !== null && category.id !== highlightedCategory;
+      const held = this.holds.isHeld(block.id);
       view.mesh.setAppearance({ token: category.color, dimmed, hovered: hoveredId === block.id, hatched: !inside });
+      // A block under construction shows as the job's copy, not this mesh.
+      view.mesh.root.visible = !held;
       view.label.setText(this.labelText(block, inside));
-      view.label.setOpacity(dimmed ? DIMMED_OPACITY : 1);
+      view.label.setOpacity(held ? this.holds.labelOpacity(block.id) : dimmed ? DIMMED_OPACITY : 1);
       view.label.sprite.visible = this.labelMode === 'always' || block.id === hoveredId || block.id === selectedId;
 
       if (inside && block.end > topEnd) {
         topEnd = block.end;
         this.topId = block.id;
       }
+      this.topYValue = Math.max(this.topYValue, view.mesh.baseY + view.mesh.height);
     }
 
     for (const [id, view] of this.views) {
@@ -219,9 +246,14 @@ export class Tower {
     this.syncGaps(blocks);
     this.syncOutline();
     this.syncGhost();
-    const built = blocks.length > 0;
-    this.foundation.root.visible = built;
-    this.ground.setPrepared(built);
+    // During a first build the job owns the plot and foundation.
+    if (!this.holds.site) {
+      const built = blocks.length > 0;
+      this.foundation.root.visible = built;
+      this.ground.setPrepared(built);
+    } else {
+      this.foundation.root.visible = false;
+    }
     this.layoutLabels();
     this.onChange?.();
   }
@@ -264,7 +296,8 @@ export class Tower {
   }
 
   private syncOutline(): void {
-    const view = this.decor.selectedId ? this.views.get(this.decor.selectedId) : undefined;
+    const id = this.decor.selectedId;
+    const view = id && !this.holds.isHeld(id) ? this.views.get(id) : undefined;
     this.outline.visible = view !== undefined;
     if (!view) return;
     this.outline.position.y = view.mesh.baseY - OUTLINE_GROWTH / 2;
@@ -441,6 +474,7 @@ export class Tower {
     this.views.clear();
     for (const gap of this.gaps) gap.dispose();
     this.gaps = [];
+    this.keeper.dispose();
     this.leaderGeometry.dispose();
     this.root.removeFromParent();
   }
