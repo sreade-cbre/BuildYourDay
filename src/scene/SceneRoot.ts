@@ -50,6 +50,7 @@ export class SceneRoot {
   private readonly renderHooks = new Set<(camera: THREE.Camera) => void>();
   private readonly viewHooks = new Set<() => void>();
   private readonly resizeObserver: ResizeObserver;
+  private readonly raycaster = new THREE.Raycaster();
   private cameraTween: Animator | null = null;
   private needsRender = true;
   private frameId = 0;
@@ -112,11 +113,63 @@ export class SceneRoot {
     return this.renderer.domElement;
   }
 
+  /** The background and fog color for a theme (spec 5.8). */
+  static backgroundFor(theme: Theme): THREE.Color {
+    return colorOf(theme === 'dark' ? 'navyDark' : 'lightGray');
+  }
+
   setTheme(theme: Theme): void {
-    const background = colorOf(theme === 'dark' ? 'navyDark' : 'lightGray');
+    const background = SceneRoot.backgroundFor(theme);
     this.scene.background = background;
     this.fog.color.copy(background);
     this.requestRender();
+  }
+
+  /** The live background and fog colors, for theme transitions. */
+  get themeColors(): THREE.Color[] {
+    return [this.scene.background as THREE.Color, this.fog.color];
+  }
+
+  /**
+   * Moves each color to its target over `seconds`, for example the 0.4 s
+   * theme transition in spec section 14. Zero seconds applies at once.
+   */
+  tweenColors(pairs: ReadonlyArray<readonly [THREE.Color, THREE.Color]>, seconds: number): void {
+    if (seconds <= 0) {
+      for (const [color, target] of pairs) color.copy(target);
+      this.requestRender();
+      return;
+    }
+    const from = pairs.map(([color]) => color.clone());
+    let elapsed = 0;
+    this.addAnimator((dt) => {
+      elapsed += dt;
+      const t = easeInOutCubic(Math.min(1, elapsed / seconds));
+      pairs.forEach(([color, target], i) => color.lerpColors(from[i]!, target, t));
+      return elapsed < seconds;
+    });
+  }
+
+  /** A ray from the camera through a point given in client pixels. */
+  pointerRay(clientX: number, clientY: number): THREE.Raycaster {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    this.raycaster.setFromCamera(ndc, this.camera);
+    return this.raycaster;
+  }
+
+  /** Projects a world point to client pixels, for HTML placed over the scene. */
+  toClient(point: THREE.Vector3): { x: number; y: number; visible: boolean } {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const projected = point.clone().project(this.camera);
+    return {
+      x: rect.left + ((projected.x + 1) / 2) * rect.width,
+      y: rect.top + ((1 - projected.y) / 2) * rect.height,
+      visible: projected.z < 1 && Math.abs(projected.x) <= 1 && Math.abs(projected.y) <= 1,
+    };
   }
 
   // Rendering

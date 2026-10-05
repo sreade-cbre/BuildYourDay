@@ -13,6 +13,7 @@ const fillGeometry = new THREE.BoxGeometry(FILL_FOOTPRINT, 1, FILL_FOOTPRINT).tr
 export class GapMesh {
   readonly root = new THREE.Group();
   private readonly lineGeometry: THREE.EdgesGeometry;
+  private readonly fill: THREE.Mesh;
 
   constructor(readonly range: TimeRange, baseY: number, height: number) {
     const inner = Math.max(0.001, height - INSET * 2);
@@ -25,14 +26,23 @@ export class GapMesh {
     const lines = new THREE.LineSegments(this.lineGeometry, materials.gapLines());
     lines.computeLineDistances();
 
-    const fill = new THREE.Mesh(fillGeometry, materials.gapFill());
-    fill.position.y = INSET;
-    fill.scale.y = inner;
-    fill.userData.gap = { ...range };
+    this.fill = new THREE.Mesh(fillGeometry, materials.gapFill());
+    this.fill.position.y = INSET;
+    this.fill.scale.y = inner;
+    this.fill.userData.gap = { ...range };
 
     this.root.name = `gap:${range.start}-${range.end}`;
     this.root.position.y = baseY;
-    this.root.add(lines, fill);
+    this.root.add(lines, this.fill);
+  }
+
+  /** The faint fill that pointer picking tests against. */
+  get pickTarget(): THREE.Object3D {
+    return this.fill;
+  }
+
+  setHovered(hovered: boolean): void {
+    this.fill.material = materials.gapFill(hovered);
   }
 
   dispose(): void {

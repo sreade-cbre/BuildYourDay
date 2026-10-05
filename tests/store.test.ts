@@ -302,3 +302,150 @@ describe('navigation and saving', () => {
     expect(store.toSaveFile().days).toEqual({});
   });
 });
+
+describe('move earlier and later', () => {
+  it('moves one slot into free time', () => {
+    const { store } = makeStore();
+    const a = mustAdd(store, 600, 660);
+    expect(store.nudgeBlock(TODAY, a.id, 1)).toMatchObject({ ok: true, value: { start: 615, end: 675 } });
+    expect(store.nudgeBlock(TODAY, a.id, -1)).toMatchObject({ ok: true, value: { start: 600, end: 660 } });
+  });
+
+  it('moves up to a neighbor that is closer than a slot', () => {
+    const { store } = makeStore();
+    store.updateSettings({ slotMinutes: 5 });
+    const a = mustAdd(store, 600, 660);
+    mustAdd(store, 665, 700);
+    store.updateSettings({ slotMinutes: 15 });
+    expect(store.nudgeBlock(TODAY, a.id, 1)).toMatchObject({ ok: true, value: { start: 605, end: 665 } });
+  });
+
+  it('swaps with a touching neighbor inside the time they share', () => {
+    const { store, events } = makeStore();
+    const a = mustAdd(store, 600, 660);
+    const b = mustAdd(store, 660, 690);
+    mustAdd(store, 690, 750);
+    events.length = 0;
+    expect(store.nudgeBlock(TODAY, a.id, 1).ok).toBe(true);
+    expect(store.findBlock(TODAY, b.id)).toMatchObject({ start: 600, end: 630 });
+    expect(store.findBlock(TODAY, a.id)).toMatchObject({ start: 630, end: 690 });
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ type: 'blocks', changes: [{ kind: 'moved' }, { kind: 'moved' }] });
+    // And back again.
+    expect(store.nudgeBlock(TODAY, a.id, -1).ok).toBe(true);
+    expect(store.findBlock(TODAY, a.id)).toMatchObject({ start: 600, end: 660 });
+    expect(store.findBlock(TODAY, b.id)).toMatchObject({ start: 660, end: 690 });
+  });
+
+  it('stops at the window edges', () => {
+    const { store } = makeStore();
+    const first = mustAdd(store, 420, 480);
+    const last = mustAdd(store, 1020, 1080);
+    expect(store.canNudge(TODAY, first.id, -1)).toBe(false);
+    expect(store.nudgeBlock(TODAY, first.id, -1)).toEqual({ ok: false, error: MESSAGES.noRoomEarlier });
+    expect(store.canNudge(TODAY, last.id, 1)).toBe(false);
+    expect(store.nudgeBlock(TODAY, last.id, 1)).toEqual({ ok: false, error: MESSAGES.noRoomLater });
+    expect(store.canNudge(TODAY, first.id, 1)).toBe(true);
+  });
+});
+
+describe('clearing, copying, and merging days', () => {
+  it('restores a cleared day with one undo', () => {
+    const { store } = makeStore();
+    store.addBlocks(TODAY, sampleBlocks(store.settings.categories), 'sample');
+    const before = store.toSaveFile();
+    expect(store.clearDay(TODAY)).toEqual({ ok: true, value: 7 });
+    expect(store.blocks).toHaveLength(0);
+    expect(store.undoDelete().ok).toBe(true);
+    expect(store.toSaveFile()).toEqual(before);
+  });
+
+  it('copies a day onto an empty day with new ids', () => {
+    const { store, events } = makeStore();
+    store.addBlocks('2026-10-02', sampleBlocks(store.settings.categories), 'sample');
+    expect(store.previousPlannedDate(TODAY)).toBe('2026-10-02');
+    expect(store.previousPlannedDate('2026-10-02')).toBeNull();
+    events.length = 0;
+    const result = store.copyDay('2026-10-02', TODAY);
+    expect(result.ok).toBe(true);
+    const source = store.blocksFor('2026-10-02');
+    const copy = store.blocksFor(TODAY);
+    expect(copy.map((b) => [b.start, b.end, b.title, b.categoryId])).toEqual(source.map((b) => [b.start, b.end, b.title, b.categoryId]));
+    expect(copy.some((b) => source.some((s) => s.id === b.id))).toBe(false);
+    expect(events[0]).toMatchObject({ type: 'blocks', date: TODAY, origin: 'copy' });
+    expect(store.copyDay('2026-10-02', TODAY)).toEqual({ ok: false, error: MESSAGES.dayNotEmpty });
+    expect(store.copyDay('2026-09-01', '2026-10-09')).toEqual({ ok: false, error: MESSAGES.nothingToCopy });
+  });
+
+  it('merges only the days that are missing and matches categories', () => {
+    const { store } = makeStore();
+    mustAdd(store, 600, 660, 'deep');
+    const other = new Store({ today: TODAY });
+    other.updateSettings({
+      categories: [
+        { id: 'deep', name: 'Deep work', color: 'navy' },
+        { id: 'x1', name: 'meetings', color: 'blueDark' },
+        { id: 'x2', name: 'Travel', color: 'slateLight' },
+      ],
+    });
+    mustAdd(other, 480, 540, 'deep');
+    mustAdd(other, 480, 540, 'x1', '2026-10-06');
+    mustAdd(other, 600, 660, 'x2', '2026-10-06');
+    const result = store.mergeDays(other.toSaveFile());
+    expect(result).toEqual({ ok: true, value: ['2026-10-06'] });
+    expect(store.blocksFor(TODAY).map((b) => b.start)).toEqual([600]);
+    expect(store.blocksFor('2026-10-06').map((b) => b.categoryId)).toEqual(['meet', 'x2']);
+    expect(store.settings.categories.map((c) => c.name)).toEqual(['Deep work', 'Meetings', 'Admin', 'Travel']);
+  });
+
+  it('clears all data back to the defaults', () => {
+    const { store } = makeStore();
+    mustAdd(store, 600, 660);
+    store.updateSettings({ theme: 'dark' });
+    store.clearAll();
+    expect(store.isEmpty).toBe(true);
+    expect(store.settings.theme).toBe('light');
+    expect(store.canUndo).toBe(false);
+  });
+});
+
+describe('settings preview', () => {
+  it('shows unsaved settings without saving them or touching blocks', () => {
+    const { store, events } = makeStore();
+    const block = mustAdd(store, 600, 660, 'meet');
+    events.length = 0;
+    const draft = { ...store.settings, theme: 'dark' as const, categories: store.settings.categories.filter((c) => c.id !== 'meet') };
+    expect(store.previewSettings(draft).ok).toBe(true);
+    expect(store.settings.theme).toBe('dark');
+    expect(store.savedSettings.theme).toBe('light');
+    expect(store.toSaveFile().settings.theme).toBe('light');
+    expect(store.findBlock(TODAY, block.id)!.categoryId).toBe('meet');
+    expect(store.categoryFor(store.findBlock(TODAY, block.id)!).id).toBe('deep');
+    expect(events).toEqual([expect.objectContaining({ type: 'settings', preview: true })]);
+  });
+
+  it('reverts when the preview ends and commits when saved', () => {
+    const { store } = makeStore();
+    const block = mustAdd(store, 600, 660, 'meet');
+    const draft = { ...store.settings, theme: 'dark' as const, categories: store.settings.categories.filter((c) => c.id !== 'meet') };
+    store.previewSettings(draft);
+    store.previewSettings(null);
+    expect(store.settings.theme).toBe('light');
+    expect(store.category('meet')).toBeDefined();
+
+    store.previewSettings(draft);
+    expect(store.updateSettings(draft).ok).toBe(true);
+    expect(store.isPreviewingSettings).toBe(false);
+    expect(store.savedSettings.theme).toBe('dark');
+    expect(store.findBlock(TODAY, block.id)!.categoryId).toBe('deep');
+  });
+
+  it('refuses an invalid preview', () => {
+    const { store } = makeStore();
+    expect(store.previewSettings({ ...store.settings, dayStart: 600, dayEnd: 780 })).toEqual({
+      ok: false,
+      error: MESSAGES.windowLength,
+    });
+    expect(store.isPreviewingSettings).toBe(false);
+  });
+});

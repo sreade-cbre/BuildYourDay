@@ -22,6 +22,10 @@ import { isIsoDate, isOnSlot } from './time';
 // a method here, every method enforces the invariants from spec section 6, and
 // every committed change is announced to subscribers with a change type so the
 // scene can pick the right animation.
+//
+// Times are fixed: an edit never changes another block's time, except the
+// explicit swap in nudgeBlock (spec 12.4). Resizes stop at neighbors, moves
+// land only in free time, and deleting leaves free time.
 
 export type BlockChangeKind = 'added' | 'removed' | 'resized' | 'moved' | 'retitled' | 'recategorized';
 
@@ -38,7 +42,8 @@ export type ChangeOrigin = 'user' | 'undo' | 'sample' | 'copy' | 'import' | 'set
 
 export type StoreEvent =
   | { type: 'blocks'; date: IsoDate; changes: BlockChange[]; origin: ChangeOrigin }
-  | { type: 'settings'; previous: Settings; current: Settings }
+  /** `preview` is true for unsaved settings shown while the settings modal is open. */
+  | { type: 'settings'; previous: Settings; current: Settings; preview: boolean }
   | { type: 'viewedDate'; previous: IsoDate; current: IsoDate }
   | { type: 'loaded' };
 
@@ -75,7 +80,11 @@ export const MESSAGES = {
   unknownBlock: 'That block no longer exists, so select another one.',
   unknownCategory: 'That category no longer exists, so pick another one.',
   nothingToUndo: 'There is nothing to undo.',
-  undoBlocked: 'That time is now taken, so the block could not be restored.',
+  undoBlocked: 'That time is now taken, so the blocks could not be restored.',
+  noRoomEarlier: 'This block already starts at the start of the day window, so move the day start earlier to make room.',
+  noRoomLater: 'This block already ends at the end of the day window, so move the day end later to make room.',
+  dayNotEmpty: 'This day already has blocks, so clear it before copying another day into it.',
+  nothingToCopy: 'That day has no blocks to copy.',
   lastCategory: 'At least one category is required, so add another before removing this one.',
   categoryLimit: `You can have up to ${LIMITS.maxCategories} categories, so remove one before adding another.`,
   categoryName: `Category names need 1 to ${LIMITS.categoryNameMax} characters, so adjust the name.`,
@@ -113,6 +122,13 @@ function byStart(a: Block, b: Block): number {
 
 function cloneSettings(settings: Settings): Settings {
   return { ...settings, categories: settings.categories.map((c) => ({ ...c })) };
+}
+
+function normalizeSettings(settings: Settings): Settings {
+  return cloneSettings({
+    ...settings,
+    categories: settings.categories.map((c) => ({ ...c, name: c.name.trim() })),
+  });
 }
 
 const ENUMS = {
@@ -174,9 +190,12 @@ function validateCategories(categories: readonly Category[]): string | null {
 
 export class Store {
   private settingsState: Settings = defaultSettings();
+  /** Unsaved settings shown while the settings modal is open. */
+  private previewState: Settings | null = null;
   private readonly days = new Map<IsoDate, Block[]>();
   private viewed: IsoDate;
-  private lastDeleted: { date: IsoDate; block: Block } | null = null;
+  /** The last deletion: one block, or every block of a cleared day. */
+  private lastDeleted: { date: IsoDate; blocks: Block[] } | null = null;
   private readonly listeners = new Set<StoreListener>();
   private readonly now: () => number;
   private readonly createId: (prefix: string) => string;
@@ -191,8 +210,18 @@ export class Store {
 
   // Reading
 
+  /** The settings in effect, including any unsaved preview. */
   get settings(): Readonly<Settings> {
+    return this.previewState ?? this.settingsState;
+  }
+
+  /** The saved settings, ignoring any preview. */
+  get savedSettings(): Readonly<Settings> {
     return this.settingsState;
+  }
+
+  get isPreviewingSettings(): boolean {
+    return this.previewState !== null;
   }
 
   get viewedDate(): IsoDate {
@@ -213,12 +242,31 @@ export class Store {
   }
 
   category(id: CategoryId): Category | undefined {
-    return this.settingsState.categories.find((c) => c.id === id);
+    return this.settings.categories.find((c) => c.id === id);
+  }
+
+  /**
+   * A block's category. While a settings preview removes its category, this is
+   * the first category, which is where saving would move the block.
+   */
+  categoryFor(block: Pick<Block, 'categoryId'>): Category {
+    return this.category(block.categoryId) ?? this.settings.categories[0]!;
   }
 
   /** Dates that hold at least one block, oldest first. */
   plannedDates(): IsoDate[] {
     return [...this.days.keys()].sort();
+  }
+
+  /** The latest date before `date` that has blocks, if any. */
+  previousPlannedDate(date: IsoDate): IsoDate | null {
+    let found: IsoDate | null = null;
+    for (const day of this.days.keys()) if (day < date && (found === null || day > found)) found = day;
+    return found;
+  }
+
+  get isEmpty(): boolean {
+    return this.days.size === 0;
   }
 
   /** How many blocks across all days use a category. */
@@ -234,6 +282,7 @@ export class Store {
     return this.lastDeleted !== null;
   }
 
+  /** The saved state. A settings preview is never part of it. */
   toSaveFile(): SaveFile {
     const days: Record<IsoDate, DayPlan> = {};
     for (const date of this.plannedDates()) {
@@ -278,7 +327,7 @@ export class Store {
 
   /**
    * Adds several blocks at once, all or nothing, as one change event. Used for
-   * the sample day and for copying a day.
+   * the sample day.
    */
   addBlocks(date: IsoDate, drafts: readonly BlockDraft[], origin: ChangeOrigin = 'user'): Result<Block[]> {
     if (!isIsoDate(date)) return fail(MESSAGES.invalidDate);
@@ -313,10 +362,10 @@ export class Store {
 
   private checkNewBlock(draft: BlockDraft, others: readonly Block[]): string | null {
     const { start, end } = draft;
-    const { slotMinutes } = this.settingsState;
+    const { slotMinutes } = this.settings;
     if (!this.category(draft.categoryId)) return MESSAGES.unknownCategory;
     if (!Number.isInteger(start) || !Number.isInteger(end) || end <= start) return MESSAGES.badTimes;
-    if (!isInWindow(draft, this.settingsState)) return MESSAGES.outsideWindow;
+    if (!isInWindow(draft, this.settings)) return MESSAGES.outsideWindow;
     if (!isOnSlot(start, slotMinutes) || !isOnSlot(end, slotMinutes)) return MESSAGES.offSlot(slotMinutes);
     if (end - start < slotMinutes) return MESSAGES.tooShort(slotMinutes);
     if (others.some((b) => overlaps(b, draft))) return MESSAGES.overlap;
@@ -372,10 +421,10 @@ export class Store {
   }
 
   private checkTimeEdit(previous: Block, next: Block, blocks: readonly Block[]): string | null {
-    const { slotMinutes } = this.settingsState;
+    const { slotMinutes } = this.settings;
     const { start, end } = next;
     if (!Number.isInteger(start) || !Number.isInteger(end) || end <= start) return MESSAGES.badTimes;
-    if (!isInWindow(next, this.settingsState)) return MESSAGES.outsideWindow;
+    if (!isInWindow(next, this.settings)) return MESSAGES.outsideWindow;
     const length = end - start;
     const previousLength = previous.end - previous.start;
     const isMove = start !== previous.start && length === previousLength;
@@ -392,40 +441,90 @@ export class Store {
     return null;
   }
 
+  /**
+   * Moves a block one slot earlier or later (spec 12.4). When a neighbor sits
+   * closer than a slot, the block moves up to it; when the neighbor touches,
+   * the two swap places within the time they share. No other block moves.
+   */
+  nudgeBlock(date: IsoDate, id: BlockId, direction: -1 | 1): Result<Block> {
+    const blocks = this.blocksFor(date);
+    const block = blocks.find((b) => b.id === id);
+    if (!block) return fail(MESSAGES.unknownBlock);
+    const plan = this.planNudge(blocks, block, direction);
+    if (!plan) return fail(direction > 0 ? MESSAGES.noRoomLater : MESSAGES.noRoomEarlier);
+
+    const changes: BlockChange[] = plan.map((next) => ({
+      kind: 'moved',
+      block: next,
+      previous: blocks.find((b) => b.id === next.id)!,
+    }));
+    const moved = new Map(plan.map((b) => [b.id, b]));
+    this.days.set(date, blocks.map((b) => moved.get(b.id) ?? b).sort(byStart));
+    this.emit({ type: 'blocks', date, origin: 'user', changes });
+    return ok(moved.get(id)!);
+  }
+
+  /** Whether nudgeBlock would do anything, for enabling the move buttons. */
+  canNudge(date: IsoDate, id: BlockId, direction: -1 | 1): boolean {
+    const blocks = this.blocksFor(date);
+    const block = blocks.find((b) => b.id === id);
+    return block !== undefined && this.planNudge(blocks, block, direction) !== null;
+  }
+
+  private planNudge(blocks: readonly Block[], block: Block, direction: -1 | 1): Block[] | null {
+    const { slotMinutes, dayStart, dayEnd } = this.settings;
+    const length = block.end - block.start;
+    if (direction > 0) {
+      const next = blocks.filter((b) => b.id !== block.id && b.start >= block.end).sort(byStart)[0];
+      // A block outside the window may move toward it but not further away.
+      const limit = Math.min(next ? next.start : Infinity, Math.max(dayEnd, block.end));
+      const room = limit - block.end;
+      if (room > 0) {
+        const shift = Math.min(slotMinutes, room);
+        return [{ ...block, start: block.start + shift, end: block.end + shift }];
+      }
+      if (next && next.start === block.end) {
+        const nextLength = next.end - next.start;
+        return [
+          { ...next, start: block.start, end: block.start + nextLength },
+          { ...block, start: block.start + nextLength, end: next.end },
+        ];
+      }
+      return null;
+    }
+    const previous = blocks.filter((b) => b.id !== block.id && b.end <= block.start).sort(byStart).at(-1);
+    const limit = Math.max(previous ? previous.end : -Infinity, Math.min(dayStart, block.start));
+    const room = block.start - limit;
+    if (room > 0) {
+      const shift = Math.min(slotMinutes, room);
+      return [{ ...block, start: block.start - shift, end: block.end - shift }];
+    }
+    if (previous && previous.end === block.start) {
+      return [
+        { ...block, start: previous.start, end: previous.start + length },
+        { ...previous, start: previous.start + length, end: block.end },
+      ];
+    }
+    return null;
+  }
+
   /** Removes a block and keeps a copy so undoDelete() can restore it. */
   deleteBlock(date: IsoDate, id: BlockId, origin: ChangeOrigin = 'user'): Result<Block> {
     const blocks = this.blocksFor(date);
     const block = blocks.find((b) => b.id === id);
     if (!block) return fail(MESSAGES.unknownBlock);
     this.setDay(date, blocks.filter((b) => b.id !== id));
-    this.lastDeleted = { date, block: { ...block } };
+    this.lastDeleted = { date, blocks: [{ ...block }] };
     this.emit({ type: 'blocks', date, origin, changes: [{ kind: 'removed', block, previous: block }] });
     return ok(block);
   }
 
-  /** Restores the most recently deleted block, identical to how it was. */
-  undoDelete(): Result<{ date: IsoDate; block: Block }> {
-    if (!this.lastDeleted) return fail(MESSAGES.nothingToUndo);
-    const { date } = this.lastDeleted;
-    let block = this.lastDeleted.block;
-    const blocks = this.blocksFor(date);
-    if (blocks.length >= LIMITS.maxBlocksPerDay) return fail(MESSAGES.dayFull);
-    if (blocks.some((b) => overlaps(b, block))) return fail(MESSAGES.undoBlocked);
-    if (!this.category(block.categoryId)) {
-      // Its category was removed in the meantime; follow the same rule as a deletion.
-      block = { ...block, categoryId: this.settingsState.categories[0]!.id };
-    }
-    this.days.set(date, [...blocks, block].sort(byStart));
-    this.lastDeleted = null;
-    this.emit({ type: 'blocks', date, origin: 'undo', changes: [{ kind: 'added', block }] });
-    return ok({ date, block });
-  }
-
-  /** Removes every block on a date. Returns how many were removed. */
+  /** Removes every block on a date. They can be restored with undoDelete(). */
   clearDay(date: IsoDate, origin: ChangeOrigin = 'user'): Result<number> {
     const blocks = this.blocksFor(date);
     if (blocks.length === 0) return ok(0);
     this.days.delete(date);
+    this.lastDeleted = { date, blocks: blocks.map((b) => ({ ...b })) };
     this.emit({
       type: 'blocks',
       date,
@@ -433,6 +532,42 @@ export class Store {
       changes: blocks.map((block) => ({ kind: 'removed', block, previous: block })),
     });
     return ok(blocks.length);
+  }
+
+  /** Restores the most recent deletion, identical to how it was. */
+  undoDelete(): Result<{ date: IsoDate; blocks: Block[] }> {
+    if (!this.lastDeleted) return fail(MESSAGES.nothingToUndo);
+    const { date } = this.lastDeleted;
+    const existing = this.blocksFor(date);
+    if (existing.length + this.lastDeleted.blocks.length > LIMITS.maxBlocksPerDay) return fail(MESSAGES.dayFull);
+    if (this.lastDeleted.blocks.some((d) => existing.some((b) => overlaps(b, d)))) return fail(MESSAGES.undoBlocked);
+    const fallback = this.settingsState.categories[0]!.id;
+    // A category removed in the meantime follows the same rule as a deletion.
+    const restored = this.lastDeleted.blocks.map((b) =>
+      this.settingsState.categories.some((c) => c.id === b.categoryId) ? b : { ...b, categoryId: fallback },
+    );
+    this.days.set(date, [...existing, ...restored].sort(byStart));
+    this.lastDeleted = null;
+    this.emit({ type: 'blocks', date, origin: 'undo', changes: restored.map((block) => ({ kind: 'added', block })) });
+    return ok({ date, blocks: restored });
+  }
+
+  /**
+   * Copies every block from one day onto an empty day with new ids (spec
+   * 12.8). Times are kept as they are, like any existing block.
+   */
+  copyDay(from: IsoDate, to: IsoDate): Result<Block[]> {
+    if (!isIsoDate(from) || !isIsoDate(to)) return fail(MESSAGES.invalidDate);
+    if (this.blocksFor(to).length > 0) return fail(MESSAGES.dayNotEmpty);
+    const source = this.blocksFor(from);
+    if (source.length === 0) return fail(MESSAGES.nothingToCopy);
+    const created: Block[] = [];
+    for (const block of source) {
+      created.push({ ...block, id: this.uniqueBlockId(created), createdAt: this.now() });
+    }
+    this.days.set(to, created);
+    this.emit({ type: 'blocks', date: to, origin: 'copy', changes: created.map((block) => ({ kind: 'added', block })) });
+    return ok(created);
   }
 
   private setDay(date: IsoDate, blocks: Block[]): void {
@@ -456,21 +591,54 @@ export class Store {
   /**
    * Applies a settings change after validating the result as a whole. Blocks
    * that reference a removed category move to the first remaining category.
-   * Blocks that fall outside a new day window are kept as they are.
+   * Blocks that fall outside a new day window are kept as they are. Saving
+   * ends any preview.
    */
   updateSettings(patch: Partial<Settings>): Result<Settings> {
-    const previous = this.settingsState;
-    const next: Settings = cloneSettings({
-      ...previous,
+    const previous = this.settings;
+    const next = normalizeSettings({
+      ...this.settingsState,
       ...patch,
-      categories: (patch.categories ?? previous.categories).map((c) => ({ ...c, name: c.name.trim() })),
+      categories: patch.categories ?? this.settingsState.categories,
     });
     const error = validateSettings(next);
     if (error) return fail(error);
 
     this.settingsState = next;
-    const fallback = next.categories[0]!.id;
-    const live = new Set(next.categories.map((c) => c.id));
+    this.previewState = null;
+    const reassigned = this.reassignOrphans();
+    this.emit({ type: 'settings', previous, current: next, preview: false });
+    for (const [date, changes] of reassigned) {
+      this.emit({ type: 'blocks', date, origin: 'settings', changes });
+    }
+    return ok(next);
+  }
+
+  /**
+   * Shows unsaved settings everywhere without saving them or touching any
+   * block, so the settings modal can preview live and revert on Cancel.
+   * Passing null ends the preview.
+   */
+  previewSettings(draft: Settings | null): Result<Settings> {
+    const previous = this.settings;
+    if (draft === null) {
+      if (this.previewState === null) return ok(this.settingsState);
+      this.previewState = null;
+      this.emit({ type: 'settings', previous, current: this.settingsState, preview: true });
+      return ok(this.settingsState);
+    }
+    const next = normalizeSettings(draft);
+    const error = validateSettings(next);
+    if (error) return fail(error);
+    this.previewState = next;
+    this.emit({ type: 'settings', previous, current: next, preview: true });
+    return ok(next);
+  }
+
+  /** Moves blocks whose category no longer exists to the first category. */
+  private reassignOrphans(): Map<IsoDate, BlockChange[]> {
+    const fallback = this.settingsState.categories[0]!.id;
+    const live = new Set(this.settingsState.categories.map((c) => c.id));
     const reassigned = new Map<IsoDate, BlockChange[]>();
     for (const [date, blocks] of this.days) {
       const changes: BlockChange[] = [];
@@ -485,26 +653,26 @@ export class Store {
         reassigned.set(date, changes);
       }
     }
-
-    this.emit({ type: 'settings', previous, current: next });
-    for (const [date, changes] of reassigned) {
-      this.emit({ type: 'blocks', date, origin: 'settings', changes });
-    }
-    return ok(next);
+    return reassigned;
   }
 
   addCategory(name: string, color: SwatchToken): Result<Category> {
     const categories = this.settingsState.categories;
     if (categories.length >= LIMITS.maxCategories) return fail(MESSAGES.categoryLimit);
-    let id = this.createId('c');
-    while (categories.some((c) => c.id === id)) id = this.createId('c');
-    const category: Category = { id, name: name.trim(), color };
+    const category: Category = { id: this.newCategoryId(categories), name: name.trim(), color };
     const result = this.updateSettings({ categories: [...categories, category] });
     return result.ok ? ok(category) : fail(result.error);
   }
 
+  /** A fresh category id, for editors that build a category list first. */
+  newCategoryId(existing: readonly Category[] = this.settingsState.categories): CategoryId {
+    let id = this.createId('c');
+    while (existing.some((c) => c.id === id)) id = this.createId('c');
+    return id;
+  }
+
   updateCategory(id: CategoryId, patch: Partial<Pick<Category, 'name' | 'color'>>): Result<Category> {
-    const current = this.category(id);
+    const current = this.settingsState.categories.find((c) => c.id === id);
     if (!current) return fail(MESSAGES.unknownCategory);
     const updated: Category = { ...current, ...patch, id };
     const result = this.updateSettings({
@@ -519,7 +687,7 @@ export class Store {
    */
   deleteCategory(id: CategoryId): Result<number> {
     const categories = this.settingsState.categories;
-    if (!this.category(id)) return fail(MESSAGES.unknownCategory);
+    if (!categories.some((c) => c.id === id)) return fail(MESSAGES.unknownCategory);
     if (categories.length <= LIMITS.minCategories) return fail(MESSAGES.lastCategory);
     const count = this.countBlocksInCategory(id);
     const result = this.updateSettings({ categories: categories.filter((c) => c.id !== id) });
@@ -529,14 +697,69 @@ export class Store {
   // Whole state
 
   /** Replaces all plans and settings, for example after an import. */
-  load(save: SaveFile): void {
+  load(save: SaveFile, options: { keepUndo?: boolean } = {}): void {
     this.applySave(save);
+    if (!options.keepUndo) this.lastDeleted = null;
+    this.emit({ type: 'loaded' });
+  }
+
+  /**
+   * Adds the days from an import that are not here yet and leaves every
+   * existing day alone (spec 15.3). Settings stay as they are. A merged
+   * block's category is matched by id, then by name; failing both, it is
+   * added if there is room, otherwise the block moves to the first category.
+   */
+  mergeDays(save: SaveFile): Result<IsoDate[]> {
+    const categories = this.settingsState.categories.map((c) => ({ ...c }));
+    const incoming = new Map(save.settings.categories.map((c) => [c.id, c]));
+    const mapping = new Map<CategoryId, CategoryId>();
+    const resolve = (id: CategoryId): CategoryId => {
+      const known = mapping.get(id);
+      if (known) return known;
+      let target = categories.find((c) => c.id === id)?.id;
+      const source = incoming.get(id);
+      if (!target && source) {
+        target = categories.find((c) => c.name.toLowerCase() === source.name.toLowerCase())?.id;
+      }
+      if (!target && source && categories.length < LIMITS.maxCategories) {
+        categories.push({ ...source });
+        target = source.id;
+      }
+      const resolved = target ?? categories[0]!.id;
+      mapping.set(id, resolved);
+      return resolved;
+    };
+
+    const added: IsoDate[] = [];
+    const additions: Array<[IsoDate, Block[]]> = [];
+    for (const [date, plan] of Object.entries(save.days)) {
+      if (this.days.has(date) || plan.blocks.length === 0) continue;
+      additions.push([date, plan.blocks.map((b) => ({ ...b, categoryId: resolve(b.categoryId) }))]);
+      added.push(date);
+    }
+    if (added.length === 0) return ok([]);
+
+    if (categories.length !== this.settingsState.categories.length) {
+      const result = this.updateSettings({ categories });
+      if (!result.ok) return fail(result.error);
+    }
+    for (const [date, blocks] of additions) this.days.set(date, blocks.sort(byStart));
+    this.emit({ type: 'loaded' });
+    return ok(added.sort());
+  }
+
+  /** Erases every plan and returns settings to the defaults. */
+  clearAll(): void {
+    this.settingsState = defaultSettings();
+    this.previewState = null;
+    this.days.clear();
     this.lastDeleted = null;
     this.emit({ type: 'loaded' });
   }
 
   private applySave(save: SaveFile): void {
     this.settingsState = cloneSettings(save.settings);
+    this.previewState = null;
     this.days.clear();
     for (const [date, plan] of Object.entries(save.days)) {
       if (plan.blocks.length > 0) this.days.set(date, plan.blocks.map((b) => ({ ...b })).sort(byStart));

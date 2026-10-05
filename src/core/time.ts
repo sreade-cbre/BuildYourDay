@@ -120,3 +120,10 @@ export function formatDateTitle(iso: IsoDate): string {
   const date = parseIsoDate(iso);
   return `${WEEKDAYS[date.getDay()]}, ${MONTHS[date.getMonth()]} ${date.getDate()}`;
 }
+
+/** Every slot boundary from `from` to `to`, inclusive. */
+export function slotTimes(from: number, to: number, slotMinutes: number): number[] {
+  const times: number[] = [];
+  for (let t = ceilToSlot(from, slotMinutes); t <= to; t += slotMinutes) times.push(t);
+  return times;
+}

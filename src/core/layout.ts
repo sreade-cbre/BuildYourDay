@@ -132,3 +132,85 @@ export function nextFreeRange(
   const top = usable[usable.length - 1]!;
   return top.end === floorToSlot(settings.dayEnd, slot) ? top : usable[0]!;
 }
+
+/** Default length of a new block from the Add button (spec section 12.1). */
+export const NEW_BLOCK_MINUTES = 60;
+/** Longest range a gap click prefills (spec section 12.1). */
+export const GAP_DRAFT_MAX_MINUTES = 120;
+
+/**
+ * Where a new block from the Add button goes: the start of the next free
+ * range, running 60 minutes or to the end of that range. Null on a full day.
+ */
+export function defaultNewRange(blocks: readonly Block[], settings: SlotWindowSettings): TimeRange | null {
+  const range = nextFreeRange(blocks, settings, settings.slotMinutes);
+  if (!range) return null;
+  return { start: range.start, end: Math.min(range.end, range.start + NEW_BLOCK_MINUTES) };
+}
+
+/**
+ * The prefill for a click on a gap: the gap trimmed to slot boundaries and
+ * capped at 120 minutes from its start. Null when less than a slot remains.
+ */
+export function gapDraftRange(gap: TimeRange, settings: SlotWindowSettings): TimeRange | null {
+  const slot = settings.slotMinutes;
+  const start = Math.max(ceilToSlot(gap.start, slot), settings.dayStart);
+  const end = Math.min(floorToSlot(gap.end, slot), settings.dayEnd, start + GAP_DRAFT_MAX_MINUTES);
+  return end - start >= slot ? { start, end } : null;
+}
+
+/**
+ * How far a block may stretch: down to the end of the block before it (or the
+ * window start) and up to the start of the block after it (or the window end).
+ * Other blocks never move, so a resize stops at these limits (spec 12.3).
+ */
+export function resizeLimits(
+  blocks: readonly Block[],
+  block: Pick<Block, 'id' | 'start' | 'end'>,
+  settings: WindowSettings,
+): { minStart: number; maxEnd: number } {
+  let minStart = settings.dayStart;
+  let maxEnd = settings.dayEnd;
+  for (const other of blocks) {
+    if (other.id === block.id) continue;
+    if (other.end <= block.start) minStart = Math.max(minStart, other.end);
+    if (other.start >= block.end) maxEnd = Math.min(maxEnd, other.start);
+  }
+  return { minStart, maxEnd };
+}
+
+/**
+ * The slot-aligned start nearest to `desired` where a block of `duration`
+ * fits in free time, ignoring the block being moved. A dragged block lands
+ * here, so it never pushes others aside. Ties go in the direction of travel.
+ * Null when no free range is long enough.
+ */
+export function nearestFreeStart(
+  blocks: readonly Block[],
+  settings: SlotWindowSettings,
+  duration: number,
+  desired: number,
+  excludeId: string,
+  preferLater = true,
+): number | null {
+  const slot = settings.slotMinutes;
+  const target = Math.round(desired / slot) * slot;
+  const others = blocks.filter((b) => b.id !== excludeId);
+  let best: number | null = null;
+  let bestDistance = Infinity;
+  for (const gap of computeGaps(others, settings)) {
+    const earliest = ceilToSlot(gap.start, slot);
+    const latest = floorToSlot(gap.end - duration, slot);
+    if (latest < earliest) continue;
+    const candidate = clamp(target, earliest, latest);
+    const distance = Math.abs(candidate - target);
+    const better =
+      distance < bestDistance ||
+      (distance === bestDistance && best !== null && (preferLater ? candidate > best : candidate < best));
+    if (better) {
+      best = candidate;
+      bestDistance = distance;
+    }
+  }
+  return best;
+}

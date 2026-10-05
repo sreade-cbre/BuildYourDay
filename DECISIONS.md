@@ -142,5 +142,134 @@ what was decided and why. Section numbers refer to `TIME_TOWER_SPEC.md`.
 32. **The app opens on today.** `lastViewedDate` is saved but, per section
     7.4, startup always shows today.
 33. **Sample day loads automatically in M1.** There is no editing or saving
-    yet, so development builds open on the section 20 sample day. The "Load
-    sample day" button replaces this in a later milestone.
+    yet, so development builds open on the section 20 sample day. Replaced in
+    M2 by the "Load sample day" button (M2 decision 12).
+
+## M2: Editing and persistence
+
+### Fixed times
+
+1. **Edits never move other blocks (your call, October 5, 2026).** The spec
+   disagreed with itself: section 12.3 says a resize stops at the block above,
+   while 12.3's "blocks above shift live", 12.4's "other blocks shifting out
+   of the way", and the settle steps in 11.1 to 11.3 have neighbors moving.
+   Chosen: a resize stops at its neighbors, a dragged block lands in the
+   nearest free time that fits (the blue ghost follows the pointer, the block
+   shows where it will land), deleting leaves free time, and only Move earlier
+   and Move later change a neighbor, by swapping with one that touches. The
+   settle animation in M4 will play only when a time really changes.
+2. **Time selects only offer times that fit.** In the inspector and the list
+   view, start and end choices stop at the neighbors, so a select cannot push
+   anything either. A block made under a finer slot keeps its own off-grid
+   times in the list.
+
+### Persistence
+
+3. **Storage is passed into core.** Section 19 lists `persist.ts` under
+   `core/`, which has no DOM access. The module takes any object with
+   getItem, setItem, and removeItem; `main.ts` hands it `window.localStorage`
+   after a test write, and tests hand it a map.
+4. **Migration keeps blocks outside the window.** Section 15.2 says to clamp
+   blocks to the window, but section 6 keeps blocks that fall outside after a
+   settings change so that changing back restores them. For the app's own
+   version 1 saves, section 6 wins; clamping there would destroy those blocks
+   on the next reload. Version 0 data, which carries no window, is clamped to
+   the window. Every version snaps times to the 5 minute grid, clamps them to
+   the 24 hour day, and drops blocks left with no time, overlaps, repeats, and
+   anything past 48 blocks, reporting each change to the console.
+5. **Unreadable saves are backed up once.** Bad JSON, a bad shape, or a newer
+   version is copied to `timetower.save.corrupt.<timestamp>` and the main key
+   is cleared, so the next start does not back it up again. If the copy
+   fails, the original stays put.
+6. **Writes flush on page hide.** Changes save 250 ms after they settle, and
+   anything pending is written when the page is hidden, so closing the tab
+   right after an edit loses nothing.
+7. **Import merge and categories.** Merging adds only missing days and keeps
+   current settings. A merged block's category is matched by id, then by name;
+   if neither exists it is added when there is room, otherwise the block moves
+   to the first category.
+
+### Settings modal
+
+8. **Live preview without touching data.** The store has a preview layer for
+   unsaved settings, so the modal previews everything live (section 13.6)
+   while blocks and saved settings stay untouched. Removing a category shows
+   its blocks under the first category until Save, which then reassigns them.
+   Previews are never written to storage.
+9. **Data actions inside the modal apply at once.** Export, Clear this day,
+   and Clear all data act immediately; Import first cancels unsaved settings
+   and closes the modal, since the file may bring its own settings. Clear all
+   data resets settings too and closes the modal.
+10. **Preview button waits for animations.** The animation speed slider is
+    wired, and its Preview button is shown unavailable until build animations
+    exist; section 21 allows animation settings to do nothing in M2.
+
+### Interactions
+
+11. **Press, then drag.** A press on a block selects it. Dragging the roof or
+    base zone of a selected block resizes it; dragging its body, or dragging an
+    unselected block, moves it. Travel is measured from the press point. A
+    drag that loses its pointer commits where it last was (section 18), and
+    Escape cancels it.
+12. **Sample day button.** Section 20's "Load sample day" button replaces the
+    M1 automatic load. It shows over the plot in development builds while no
+    data exists at all, and loads today's plan instantly; the animated build
+    arrives in M5.
+13. **Copy the previous day lands now, instantly.** Section 12.8 is part of
+    section 12, which M2's acceptance covers, so the menu item works now; the
+    rapid build animation arrives in M5. It is offered only on an empty day
+    with an earlier planned day, and names that day when it is not yesterday.
+14. **Clear this day uses Undo, not a confirmation.** Like Demolish (section
+    12.6). The undo buffer holds the most recent deletion, one block or a whole
+    day.
+15. **The top block's roof.** Clicking the top face of the topmost block
+    starts a new block (section 12.1); clicking its sides selects it.
+16. **Shift and the wheel.** One standard wheel notch (100 px) changes the
+    end by one slot, and smaller trackpad deltas add up to the same. Scrolling
+    up lengthens. Over anything but the selected block, the wheel zooms.
+17. **Arrow keys.** Up selects the next block in time, which is higher in the
+    tower, and Down the previous; with nothing selected, Up starts at the
+    earliest block and Down at the latest. On macOS, arrow keys open a closed
+    select's menu instead of stepping its value, which is the platform's own
+    behavior.
+18. **Gap hover.** A hovered gap tints slightly blue so it reads as clickable.
+
+### Display
+
+19. **Blocks outside the window.** The part inside the window is drawn
+    hatched in slateLight; a block wholly outside shows as a thin hatched band
+    at the nearest window edge, slightly proud of the tower. Its label adds
+    "outside window" and the inspector shows the warning line. Totals count
+    only in-window time (M1 decision 27).
+20. **Hover labels and the highlight.** In "On hover" mode only the hovered
+    or selected block shows a label. A legend highlight dims other blocks, and
+    their labels, to 40% opacity.
+21. **Theme transition.** Background, fog, ground, and overlay colors fade
+    over 0.4 s (section 14), and switch at once under reduced motion.
+
+### Wording and accessibility
+
+22. **Button names start with verbs.** The hidden list view button reads
+    "Open list view" (the spec calls it "List view"), the list dialog closes
+    with "Close list view", and the import prompt offers "Replace all data",
+    "Merge days", and "Cancel". "Today" keeps its spec name on screen, with
+    the accessible name "Go to today".
+23. **Add block contrast.** Section 13.1 specifies white text on blue. That
+    pair is about 3.5 to 1, which meets AA only for large text. It is kept as
+    specified, in bold; blueDark would give about 6.4 to 1 if preferred. Dark
+    theme links and the skip button use blueLight, since blue on navyDark
+    misses AA.
+24. **Unavailable controls stay focusable.** Add block on a full day, the
+    move buttons at an edge, and similar controls use aria-disabled with the
+    reason in the tooltip, because a disabled button cannot show a tooltip.
+
+### Structure
+
+25. **Extra UI modules.** Toasts, the shared modal dialog, keyboard
+    shortcuts, UI state, DOM helpers, time choices, and the debug panel each
+    have a file in `src/ui/`. The spec puts toasts in `Overlay.ts`; they moved
+    out to keep that file to the top bar.
+26. **Debug panel early.** The D key toggles the live geometry and texture
+    counts from section 16 now, since they help check edits for leaks.
+27. **Without WebGL2.** The list view is the page (section 17) with a notice;
+    the inspector still opens from N or Add block, and everything else works.

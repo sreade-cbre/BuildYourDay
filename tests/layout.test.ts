@@ -4,8 +4,12 @@ import {
   UNITS_PER_MINUTE,
   canPlace,
   computeGaps,
+  defaultNewRange,
+  gapDraftRange,
   minutesToY,
+  nearestFreeStart,
   nextFreeRange,
+  resizeLimits,
   totals,
   towerHeight,
   yToMinutes,
@@ -201,5 +205,54 @@ describe('nextFreeRange', () => {
   it('trims gaps left by a finer slot to the current slot', () => {
     const blocks = [block(420, 605), block(650, 1080)];
     expect(nextFreeRange(blocks, s, 15)).toEqual({ start: 615, end: 645 });
+  });
+});
+
+describe('new block ranges', () => {
+  const s = settings();
+
+  it('defaults to an hour at the top of the tower', () => {
+    expect(defaultNewRange([], s)).toEqual({ start: 420, end: 480 });
+    expect(defaultNewRange(sample, s)).toEqual({ start: 1020, end: 1080 });
+    expect(defaultNewRange([block(420, 1050)], s)).toEqual({ start: 1050, end: 1080 });
+    expect(defaultNewRange([block(420, 1080)], s)).toBeNull();
+  });
+
+  it('prefills a clicked gap, trimmed to slots and capped at two hours', () => {
+    expect(gapDraftRange({ start: 810, end: 900 }, s)).toEqual({ start: 810, end: 900 });
+    expect(gapDraftRange({ start: 420, end: 1080 }, s)).toEqual({ start: 420, end: 540 });
+    expect(gapDraftRange({ start: 605, end: 650 }, s)).toEqual({ start: 615, end: 645 });
+    expect(gapDraftRange({ start: 605, end: 625 }, s)).toBeNull();
+  });
+});
+
+describe('fixed times', () => {
+  const s = settings();
+
+  it('limits a resize to the neighbors and the window', () => {
+    const blocks = [block(480, 540), block(600, 660), block(720, 780)];
+    expect(resizeLimits(blocks, blocks[1]!, s)).toEqual({ minStart: 540, maxEnd: 720 });
+    expect(resizeLimits(blocks, blocks[0]!, s)).toEqual({ minStart: 420, maxEnd: 600 });
+    expect(resizeLimits(blocks, blocks[2]!, s)).toEqual({ minStart: 660, maxEnd: 1080 });
+  });
+
+  it('lands a moved block in the nearest free time that fits', () => {
+    const moving = block(480, 540);
+    const blocks = [moving, block(600, 660), block(720, 780)];
+    expect(nearestFreeStart(blocks, s, 60, 900, moving.id)).toBe(900);
+    // Dropped onto the 10:00 block: the closest fits are 9:00 and 11:00.
+    expect(nearestFreeStart(blocks, s, 60, 600, moving.id, true)).toBe(660);
+    expect(nearestFreeStart(blocks, s, 60, 600, moving.id, false)).toBe(540);
+    // The block's own old spot counts as free.
+    expect(nearestFreeStart(blocks, s, 60, 470, moving.id)).toBe(465);
+    // A 90 minute block cannot fit between 11:00 and 12:00.
+    expect(nearestFreeStart(blocks, s, 90, 660, moving.id)).toBe(780);
+  });
+
+  it('keeps moves inside the window and reports when nothing fits', () => {
+    const moving = block(480, 540);
+    expect(nearestFreeStart([moving], s, 60, 2000, moving.id)).toBe(1020);
+    expect(nearestFreeStart([moving], s, 60, 0, moving.id)).toBe(420);
+    expect(nearestFreeStart([moving, block(420, 480), block(540, 1080)], s, 90, 600, moving.id)).toBeNull();
   });
 });

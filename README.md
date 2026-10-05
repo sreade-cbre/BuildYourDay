@@ -11,7 +11,7 @@ time order, with free time shown as hollow wireframe. The full design lives in
 | Milestone | Scope | State |
 |---|---|---|
 | M1 | Static tower: scene, sample day, labels, camera, totals | Done |
-| M2 | Editing, persistence, settings, list view, dark theme | Not started |
+| M2 | Editing, persistence, settings, list view, dark theme | Done |
 | M3 | First build animation | Not started |
 | M4 | Stacked builds and the other jobs | Not started |
 | M5 | Living tower: now ring, weathering, idle orbit | Not started |
@@ -28,8 +28,9 @@ npm install
 npm run dev
 ```
 
-Then open http://localhost:5173. In development the app opens on today's date
-with the sample day from spec section 20.
+Then open http://localhost:5173. The app opens on today's date. In
+development, a first run with no saved data offers a "Load sample day" button
+on the plot.
 
 | Script | What it does |
 |---|---|
@@ -44,13 +45,72 @@ The build has no network calls and no web fonts, so it works offline.
 
 ## Using it
 
-- Drag on the scene to orbit the tower. The camera stays between 45 degrees
-  and about 5 degrees above the horizon.
-- Scroll to zoom.
-- The top bar shows the date and how much of the day is stacked and free.
+Every block keeps its own time: editing one block never moves another. A
+resize stops at its neighbors, a moved block lands in the nearest free time,
+and deleting a block leaves free time behind.
 
-Editing, settings, and keyboard shortcuts arrive with M2; this section will
-cover them then.
+- **Add a block** with Add block, the N key, a click on a gap (it prefills
+  that free time, up to two hours), or a click on the plot or the top roof.
+- **Select** a block by clicking it or its label. Click empty space or press
+  Escape to deselect. Up and Down move the selection through the day.
+- **Resize** a selected block by dragging its roof or base, by Shift and the
+  mouse wheel over it (one slot per notch), or with the times in the inspector.
+- **Move** a selected block by dragging its body. A blue ghost follows the
+  pointer and the block shows where it will land. Move earlier and Move later
+  in the inspector step one slot, swapping with a neighbor that touches.
+- **Rename and recategorize** in the inspector. Titles and times commit on
+  Enter or when you leave the field.
+- **Demolish** with the inspector button or Delete. An Undo toast stays for
+  six seconds.
+- **Change days** with the arrows beside the date, the [ and ] keys, or
+  Today.
+- **Highlight a category** by clicking it in the legend; click again or press
+  Escape to clear.
+- **Orbit** by dragging empty space and zoom with the wheel. A drag that
+  starts on a block never orbits. Reset view or R returns to the default view.
+- **List view**: press Tab once on load to reveal Open list view, a plain
+  table with the same edits. It is the whole page in browsers without WebGL2.
+
+Plans and settings save to this browser's local storage under
+`timetower.save`. The menu exports a JSON file and imports one (replacing all
+data or merging in days you do not have), copies the previous planned day onto
+an empty day, and clears the current day.
+
+### Keyboard
+
+| Key | Action |
+|---|---|
+| N | New block |
+| Enter | Confirm the inspector |
+| Escape | Close the inspector, deselect, cancel a drag, or clear a highlight |
+| Delete, Backspace | Demolish the selected block |
+| Up, Down | Select the next or previous block |
+| [ and ] | Previous or next day |
+| T | Go to today |
+| R | Reset view |
+| , (comma) | Open settings |
+| D | Show renderer statistics |
+| Shift + wheel | Change the selected block's end by one slot |
+
+### Settings
+
+Open with the gear or the comma key. Changes preview at once; Save keeps them
+and Cancel puts everything back.
+
+| Setting | What it does |
+|---|---|
+| Day start, Day end | The planned window, 4 to 18 hours, on half hours. Blocks outside it are kept, drawn hatched. |
+| Slot | 5, 10, 15, or 30 minutes. New edits snap to it. |
+| Time format | 12h or 24h. |
+| Categories | Up to 9, each with a name and one of nine brand colors. Removing one moves its blocks to the first category. |
+| Animation speed | 0.5x to 3x for the build animations (arriving in M3). |
+| Reduced motion | System, On, or Off. |
+| Idle orbit | Slowly circles the tower when idle (arriving in M5). |
+| Labels | Always, or only on hover. |
+| Weather past blocks | Fades blocks that are done (arriving in M5). |
+| Theme | Light or Dark. |
+| Palette mode | Strict brand colors, or Accents, which adds grass green and hi-vis orange. |
+| Data | Export JSON, Import JSON, Clear this day, Clear all data (type clear to confirm). |
 
 ## Project layout
 

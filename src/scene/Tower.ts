@@ -1,6 +1,15 @@
 import * as THREE from 'three';
-import { BLOCK_FOOTPRINT, UNITS_PER_MINUTE, computeGaps, minutesToY, spanHeight } from '../core/layout';
-import type { Block, BlockId, SwatchToken, TimeRange } from '../core/model';
+import {
+  BLOCK_FOOTPRINT,
+  MIN_BLOCK_UNITS,
+  UNITS_PER_MINUTE,
+  clipToWindow,
+  computeGaps,
+  isInWindow,
+  minutesToY,
+  spanHeight,
+} from '../core/layout';
+import type { Block, BlockId, CategoryId, LabelMode, TimeRange } from '../core/model';
 import type { Store, StoreEvent } from '../core/store';
 import { formatDuration, formatTimeShort } from '../core/time';
 import { BlockMesh } from './BlockMesh';
@@ -8,12 +17,14 @@ import { Foundation } from './Foundation';
 import { GapMesh } from './GapMesh';
 import type { Ground } from './Ground';
 import { Label, type LabelText } from './Label';
-import { materials } from './materials';
+import { DIMMED_OPACITY, materials } from './materials';
 import type { LabelSpace } from './SceneRoot';
 
 // Owns the meshes for the viewed day and reconciles them against the store by
 // block id: adds what is missing, removes what is orphaned, updates what
-// changed (spec section 19). Reads the store, never writes to it.
+// changed (spec section 19). Reads the store, never writes to it. While a drag
+// or an unsaved inspector edit is in progress, a preview overrides block times
+// so the tower shows the result before anything is committed.
 
 /** Gap between a block's right face and its label (spec section 8.5). */
 const LABEL_OFFSET = 0.4;
@@ -27,6 +38,38 @@ const COLUMN_GAP = 0.3;
 /** Dense days may shrink labels to this share of their normal size to fit. */
 const MIN_LABEL_FACTOR = 0.8;
 const MAX_LEADERS = 48;
+/** Height of the grab zones at a block's roof and base for resizing. */
+const HANDLE = 0.35;
+/** The selection outline is this much larger than the block (spec 10.5). */
+const OUTLINE_GROWTH = 0.08;
+/** Blocks entirely outside the window show as a thin band at the nearest edge. */
+const OUTSIDE_BAND_MINUTES = MIN_BLOCK_UNITS / UNITS_PER_MINUTE;
+
+const outlineGeometry = new THREE.EdgesGeometry(
+  new THREE.BoxGeometry(BLOCK_FOOTPRINT + OUTLINE_GROWTH, 1, BLOCK_FOOTPRINT + OUTLINE_GROWTH).translate(0, 0.5, 0),
+);
+const ghostGeometry = new THREE.BoxGeometry(BLOCK_FOOTPRINT + 0.04, 1, BLOCK_FOOTPRINT + 0.04).translate(0, 0.5, 0);
+
+/** Interaction state the tower draws: selection, hover, and legend highlight. */
+export interface TowerDecor {
+  selectedId: BlockId | null;
+  hoveredId: BlockId | null;
+  hoveredGapStart: number | null;
+  highlightedCategory: CategoryId | null;
+}
+
+/** Temporary state shown before it is committed. */
+export interface TowerPreview {
+  /** Times that replace the stored ones, by block id. */
+  times?: ReadonlyMap<BlockId, TimeRange>;
+  /** A translucent box: the pointer during a move, or a new block draft. */
+  ghost?: TimeRange | null;
+}
+
+/** What a pointer ray hit, in tower terms. */
+export type TowerHit =
+  | { kind: 'block'; id: BlockId; zone: 'roof' | 'base' | 'body' | 'label'; topFace: boolean }
+  | { kind: 'gap'; range: TimeRange };
 
 interface BlockView {
   block: Block;
@@ -43,6 +86,8 @@ interface LabelPlan {
   slots: Array<{ view: BlockView; offset: number; leader: boolean }>;
 }
 
+const NO_DECOR: TowerDecor = { selectedId: null, hoveredId: null, hoveredGapStart: null, highlightedCategory: null };
+
 export class Tower {
   readonly root = new THREE.Group();
   /** Called whenever the tower changed and the scene should redraw. */
@@ -53,8 +98,14 @@ export class Tower {
   private readonly foundation = new Foundation();
   private readonly leaderGeometry = new THREE.BufferGeometry();
   private readonly leaders: THREE.LineSegments;
+  private readonly outline: THREE.LineSegments;
+  private readonly ghost: THREE.Mesh;
   private readonly right = new THREE.Vector3(1, 0, 0);
   private labelSpace: LabelSpace = { unitsPerPixel: 0.04, budget: Infinity };
+  private labelMode: LabelMode = 'always';
+  private decor: TowerDecor = NO_DECOR;
+  private preview: TowerPreview | null = null;
+  private topId: BlockId | null = null;
   private readonly unsubscribe: () => void;
 
   constructor(private readonly store: Store, private readonly ground: Ground) {
@@ -69,8 +120,17 @@ export class Tower {
     this.leaders.name = 'label-leaders';
     this.leaders.renderOrder = 9;
     this.leaders.frustumCulled = false;
-    this.root.add(this.leaders);
 
+    this.outline = new THREE.LineSegments(outlineGeometry, materials.selection());
+    this.outline.name = 'selection-outline';
+    this.outline.visible = false;
+
+    this.ghost = new THREE.Mesh(ghostGeometry, materials.ghost());
+    this.ghost.name = 'ghost';
+    this.ghost.visible = false;
+    this.ghost.renderOrder = 5;
+
+    this.root.add(this.leaders, this.outline, this.ghost);
     this.unsubscribe = store.subscribe((event) => this.onStoreEvent(event));
     this.sync();
   }
@@ -80,27 +140,73 @@ export class Tower {
     this.sync();
   }
 
+  setDecor(decor: TowerDecor): void {
+    this.decor = { ...decor };
+    this.sync();
+  }
+
+  setPreview(preview: TowerPreview | null): void {
+    this.preview = preview;
+    this.sync();
+  }
+
+  /** The block whose roof is the top of the tower, if any. */
+  get topBlockId(): BlockId | null {
+    return this.topId;
+  }
+
+  /** Blocks for the viewed day with any preview times applied. */
+  private effectiveBlocks(): Block[] {
+    const times = this.preview?.times;
+    return this.store.blocks.map((b) => {
+      const override = times?.get(b.id);
+      return override ? { ...b, start: override.start, end: override.end } : b;
+    });
+  }
+
   /** Brings every mesh in line with the store's viewed day. */
   sync(): void {
     const settings = this.store.settings;
-    const blocks = this.store.blocks;
+    this.labelMode = settings.labelMode;
+    const blocks = this.effectiveBlocks();
     const live = new Set<BlockId>();
+    const { selectedId, hoveredId, highlightedCategory } = this.decor;
+    let topEnd = -Infinity;
+    this.topId = null;
 
     for (const block of blocks) {
       live.add(block.id);
       let view = this.views.get(block.id);
       if (!view) {
-        const mesh = new BlockMesh(block.id, this.colorFor(block));
+        const mesh = new BlockMesh(block.id, this.store.categoryFor(block).color);
         const label = new Label();
+        label.sprite.userData.blockId = block.id;
+        label.sprite.userData.label = true;
         this.root.add(mesh.root, label.sprite);
         view = { block, mesh, label, labelOffset: LABEL_OFFSET, leader: false };
         this.views.set(block.id, view);
       }
       view.block = block;
-      view.mesh.setColor(this.colorFor(block));
-      view.mesh.setBaseY(minutesToY(block.start, settings));
-      view.mesh.setHeight(spanHeight(block.end - block.start));
-      view.label.setText(this.labelText(block));
+
+      const inside = isInWindow(block, settings);
+      const span = this.renderSpan(block);
+      view.mesh.setBaseY(minutesToY(span.start, settings));
+      view.mesh.setHeight(spanHeight(span.end - span.start));
+      // A band for a block wholly outside the window sits slightly proud of the tower.
+      const band = !clipToWindow(block, settings);
+      view.mesh.root.scale.set(band ? 1.02 : 1, 1, band ? 1.02 : 1);
+
+      const category = this.store.categoryFor(block);
+      const dimmed = highlightedCategory !== null && category.id !== highlightedCategory;
+      view.mesh.setAppearance({ token: category.color, dimmed, hovered: hoveredId === block.id, hatched: !inside });
+      view.label.setText(this.labelText(block, inside));
+      view.label.setOpacity(dimmed ? DIMMED_OPACITY : 1);
+      view.label.sprite.visible = this.labelMode === 'always' || block.id === hoveredId || block.id === selectedId;
+
+      if (inside && block.end > topEnd) {
+        topEnd = block.end;
+        this.topId = block.id;
+      }
     }
 
     for (const [id, view] of this.views) {
@@ -111,6 +217,8 @@ export class Tower {
     }
 
     this.syncGaps(blocks);
+    this.syncOutline();
+    this.syncGhost();
     const built = blocks.length > 0;
     this.foundation.root.visible = built;
     this.ground.setPrepared(built);
@@ -118,17 +226,23 @@ export class Tower {
     this.onChange?.();
   }
 
-  private colorFor(block: Block): SwatchToken {
-    return this.store.category(block.categoryId)?.color ?? 'slate';
+  /** The part of a block to draw: its own span, clipped to the window if needed. */
+  private renderSpan(block: TimeRange): TimeRange {
+    const settings = this.store.settings;
+    const clipped = clipToWindow(block, settings);
+    if (clipped) return clipped;
+    return block.end <= settings.dayStart
+      ? { start: settings.dayStart, end: settings.dayStart + OUTSIDE_BAND_MINUTES }
+      : { start: settings.dayEnd - OUTSIDE_BAND_MINUTES, end: settings.dayEnd };
   }
 
-  private labelText(block: Block): LabelText {
+  private labelText(block: Block, inside: boolean): LabelText {
     const settings = this.store.settings;
     const range = `${formatTimeShort(block.start, settings)} to ${formatTimeShort(block.end, settings)}`;
     const parts = [range, formatDuration(block.end - block.start)];
     // Category in words too, so color is never the only carrier (spec 17).
-    const category = this.store.category(block.categoryId)?.name;
-    if (category) parts.push(category);
+    parts.push(this.store.categoryFor(block).name);
+    if (!inside) parts.push('outside window');
     return { title: block.title || 'Untitled', detail: parts.join(' · ') };
   }
 
@@ -137,15 +251,76 @@ export class Tower {
     // Gaps shorter than one slot are not drawn (spec section 8.4).
     const ranges = computeGaps(blocks, settings).filter((gap) => gap.end - gap.start >= settings.slotMinutes);
     const key = `${settings.dayStart}:${ranges.map((g) => `${g.start}-${g.end}`).join(',')}`;
-    if (key === this.gapKey) return;
-    this.gapKey = key;
-    for (const gap of this.gaps) gap.dispose();
-    this.gaps = ranges.map((range: TimeRange) => {
-      const gap = new GapMesh(range, minutesToY(range.start, settings), (range.end - range.start) * UNITS_PER_MINUTE);
-      this.root.add(gap.root);
-      return gap;
-    });
+    if (key !== this.gapKey) {
+      this.gapKey = key;
+      for (const gap of this.gaps) gap.dispose();
+      this.gaps = ranges.map((range) => {
+        const gap = new GapMesh(range, minutesToY(range.start, settings), (range.end - range.start) * UNITS_PER_MINUTE);
+        this.root.add(gap.root);
+        return gap;
+      });
+    }
+    for (const gap of this.gaps) gap.setHovered(gap.range.start === this.decor.hoveredGapStart);
   }
+
+  private syncOutline(): void {
+    const view = this.decor.selectedId ? this.views.get(this.decor.selectedId) : undefined;
+    this.outline.visible = view !== undefined;
+    if (!view) return;
+    this.outline.position.y = view.mesh.baseY - OUTLINE_GROWTH / 2;
+    this.outline.scale.set(view.mesh.root.scale.x, view.mesh.height + OUTLINE_GROWTH, view.mesh.root.scale.z);
+  }
+
+  private syncGhost(): void {
+    const range = this.preview?.ghost ?? null;
+    this.ghost.visible = range !== null;
+    if (!range) return;
+    const settings = this.store.settings;
+    this.ghost.position.y = minutesToY(range.start, settings);
+    this.ghost.scale.y = spanHeight(range.end - range.start);
+  }
+
+  /** Sets the selection outline's opacity, for the pulse in spec 10.5. */
+  setOutlineOpacity(opacity: number): void {
+    const material = this.outline.material as THREE.LineBasicMaterial;
+    material.opacity = opacity;
+  }
+
+  // Picking
+
+  /** Everything a pointer can interact with: blocks, their labels, and gaps. */
+  pickTargets(): THREE.Object3D[] {
+    const targets: THREE.Object3D[] = [];
+    for (const view of this.views.values()) {
+      targets.push(view.mesh.body, view.mesh.cap);
+      if (view.label.sprite.visible) targets.push(view.label.sprite);
+    }
+    for (const gap of this.gaps) targets.push(gap.pickTarget);
+    return targets;
+  }
+
+  /** Reads a raycast hit as a block zone or a gap. */
+  interpret(hit: THREE.Intersection): TowerHit | null {
+    const data = hit.object.userData as { blockId?: BlockId; label?: boolean; roof?: boolean; gap?: TimeRange };
+    if (data.gap) return { kind: 'gap', range: data.gap };
+    if (!data.blockId) return null;
+    const view = this.views.get(data.blockId);
+    if (!view) return null;
+    if (data.label) return { kind: 'block', id: data.blockId, zone: 'label', topFace: false };
+    const topFace = (hit.face?.normal.y ?? 0) > 0.5;
+    if (data.roof) return { kind: 'block', id: data.blockId, zone: 'roof', topFace };
+    const local = hit.point.y - view.mesh.baseY;
+    const handle = Math.min(HANDLE, view.mesh.height * 0.3);
+    const zone = topFace || local >= view.mesh.height - handle ? 'roof' : local <= handle ? 'base' : 'body';
+    return { kind: 'block', id: data.blockId, zone, topFace };
+  }
+
+  /** Block meshes by id, for picking and animation. */
+  meshFor(id: BlockId): BlockMesh | undefined {
+    return this.views.get(id)?.mesh;
+  }
+
+  // Labels
 
   /** Label scale and room beside the tower, from the camera framing. */
   setLabelSpace(space: LabelSpace): void {
@@ -159,7 +334,7 @@ export class Tower {
   }
 
   /**
-   * Gives every label a place where it overlaps no other (spec section 8.5).
+   * Gives every visible label a place where it overlaps no other (spec 8.5).
    * Labels keep their normal size when the columns fit beside the tower; on a
    * dense day they shrink a little, down to MIN_LABEL_FACTOR, to fit.
    */
@@ -185,18 +360,20 @@ export class Tower {
    * steps one column further out. Short blocks get a leader line.
    */
   private planLabels(scale: number): LabelPlan {
-    const items = [...this.views.values()].map((view) => {
-      const height = view.mesh.height;
-      return {
-        view,
-        height,
-        mid: view.mesh.baseY + height / 2,
-        labelHeight: view.label.heightPx * scale,
-        labelWidth: view.label.widthPx * scale,
-        short: height < SHORT_BLOCK,
-        column: 0,
-      };
-    });
+    const items = [...this.views.values()]
+      .filter((view) => view.label.sprite.visible)
+      .map((view) => {
+        const height = view.mesh.height;
+        return {
+          view,
+          height,
+          mid: view.mesh.baseY + height / 2,
+          labelHeight: view.label.heightPx * scale,
+          labelWidth: view.label.widthPx * scale,
+          short: height < SHORT_BLOCK,
+          column: 0,
+        };
+      });
     items.sort((a, b) => b.height - a.height || a.view.block.start - b.view.block.start);
 
     const columns: Array<Array<[number, number]>> = [];
@@ -241,6 +418,7 @@ export class Tower {
     const positions = this.leaderGeometry.getAttribute('position') as THREE.BufferAttribute;
     let leaders = 0;
     for (const view of this.views.values()) {
+      if (!view.label.sprite.visible) continue;
       const mid = view.mesh.baseY + view.mesh.height / 2;
       const reach = face + view.labelOffset;
       view.label.sprite.position.set(this.right.x * reach, mid, this.right.z * reach);
@@ -252,11 +430,6 @@ export class Tower {
     }
     positions.needsUpdate = true;
     this.leaderGeometry.setDrawRange(0, leaders * 2);
-  }
-
-  /** Block meshes by id, for picking and animation. */
-  meshFor(id: BlockId): BlockMesh | undefined {
-    return this.views.get(id)?.mesh;
   }
 
   dispose(): void {

@@ -22,7 +22,7 @@ const LINE_GAP = 1;
 const RADIUS = 6;
 const CARD_OPACITY = 0.85;
 const MAX_TITLE_WIDTH = 300;
-const MAX_DETAIL_WIDTH = 360;
+const MAX_DETAIL_WIDTH = 420;
 
 export class Label {
   readonly sprite: THREE.Sprite;

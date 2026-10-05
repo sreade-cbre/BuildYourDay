@@ -41,6 +41,8 @@ export interface SignPlacement {
 export class Ground {
   readonly root = new THREE.Group();
   readonly grass: THREE.InstancedMesh;
+  /** The plot slab; clicking it starts a new block (spec 12.1). */
+  readonly plotMesh: THREE.Mesh;
   private readonly groundMaterial: THREE.MeshStandardMaterial;
   private readonly plotTopMaterial: THREE.MeshStandardMaterial;
   private readonly grassMaterial: THREE.MeshStandardMaterial;
@@ -73,6 +75,7 @@ export class Ground {
     plot.castShadow = true;
     plot.name = 'plot';
     plot.userData.plot = true;
+    this.plotMesh = plot;
     this.root.add(plot);
 
     this.grassMaterial = new THREE.MeshStandardMaterial({ color: colorOf('slateLight'), roughness: 0.9, metalness: 0 });
@@ -136,7 +139,22 @@ export class Ground {
   }
 
   setTheme(theme: Theme): void {
-    this.groundMaterial.color.copy(colorOf(theme === 'dark' ? 'slateDark' : 'white'));
+    this.groundMaterial.color.copy(Ground.groundFor(theme));
+  }
+
+  /** The ground plane color for a theme (spec 5.8). */
+  static groundFor(theme: Theme): THREE.Color {
+    return colorOf(theme === 'dark' ? 'slateDark' : 'white');
+  }
+
+  /** The live ground color, for theme transitions. */
+  get groundColor(): THREE.Color {
+    return this.groundMaterial.color;
+  }
+
+  /** World point at the center of the plot surface, for placing HTML over it. */
+  get plotCenter(): THREE.Vector3 {
+    return new THREE.Vector3(0, PLOT_TOP_Y, 0);
   }
 
   setDate(date: IsoDate): void {

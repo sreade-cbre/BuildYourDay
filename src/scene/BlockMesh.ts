@@ -16,17 +16,32 @@ const bodyGeometry = new THREE.BoxGeometry(BLOCK_FOOTPRINT, 1, BLOCK_FOOTPRINT).
 const edgeGeometry = new THREE.EdgesGeometry(bodyGeometry);
 const capGeometry = new THREE.BoxGeometry(CAP_SIZE, CAP_THICKNESS, CAP_SIZE).translate(0, -CAP_THICKNESS / 2, 0);
 
+/** How a block should look right now. */
+export interface BlockAppearance {
+  token: SwatchToken;
+  /** Outside a legend highlight. */
+  dimmed: boolean;
+  /** Under the pointer. */
+  hovered: boolean;
+  /** Outside the day window. */
+  hatched: boolean;
+}
+
+function sameAppearance(a: BlockAppearance, b: BlockAppearance): boolean {
+  return a.token === b.token && a.dimmed === b.dimmed && a.hovered === b.hovered && a.hatched === b.hatched;
+}
+
 export class BlockMesh {
   readonly root = new THREE.Group();
   readonly body: THREE.Mesh;
   readonly edges: THREE.LineSegments;
   /** Roof cap, set into the top of the block in the category's dark variant. */
   readonly cap: THREE.Mesh;
-  private token: SwatchToken;
+  private appearance: BlockAppearance;
   private heightValue = 1;
 
   constructor(readonly blockId: BlockId, token: SwatchToken) {
-    this.token = token;
+    this.appearance = { token, dimmed: false, hovered: false, hatched: false };
     this.body = new THREE.Mesh(bodyGeometry, materials.blockBody(token));
     this.body.castShadow = true;
     this.body.receiveShadow = true;
@@ -38,6 +53,7 @@ export class BlockMesh {
     this.cap.castShadow = true;
     this.cap.receiveShadow = true;
     this.cap.userData.blockId = blockId;
+    this.cap.userData.roof = true;
 
     this.root.name = `block:${blockId}`;
     this.root.add(this.body, this.edges, this.cap);
@@ -63,12 +79,19 @@ export class BlockMesh {
     this.root.position.y = y;
   }
 
-  setColor(token: SwatchToken): void {
-    if (token === this.token) return;
-    this.token = token;
-    this.body.material = materials.blockBody(token);
-    this.edges.material = materials.blockEdges(token);
-    this.cap.material = materials.blockCap(token);
+  /** Picks the shared materials for a look. Cheap to call every sync. */
+  setAppearance(next: BlockAppearance): void {
+    if (sameAppearance(next, this.appearance)) return;
+    this.appearance = { ...next };
+    const variant = next.dimmed ? 'dimmed' : 'normal';
+    // A hatched block reads as slateLight, whatever its category.
+    const token: SwatchToken = next.hatched ? 'slateLight' : next.token;
+    this.body.material = next.hatched ? materials.hatched(variant) : materials.blockBody(token, variant);
+    this.edges.material = materials.blockEdges(token, next.dimmed ? 'dimmed' : next.hovered ? 'hover' : 'normal');
+    this.cap.material = materials.blockCap(token, variant);
+    // Translucent boxes should not shade the blocks around them.
+    this.body.castShadow = !next.dimmed;
+    this.cap.castShadow = !next.dimmed;
   }
 
   /** Removes the block from the scene. Geometry and materials are shared, so nothing is freed. */
