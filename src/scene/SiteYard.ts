@@ -3,7 +3,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { tokens } from '../brand/tokens';
 import { FONT_BODY, context2d, font } from './canvasText';
 import { PLOT_TOP_Y } from './Foundation';
-import { materials } from './materials';
+import { colorOf, materials } from './materials';
 
 // The construction site around the tower's base. Site set-up is always
 // there: a mesh fence round the plot and depot with an entrance gate and
@@ -31,8 +31,35 @@ export const FENCED: ReadonlyArray<readonly [number, number, number, number]> = 
 export const ROAD_Z = 6.6;
 export const ROAD_WIDTH = 1.4;
 export const RAMP = { start: 4.0, end: 5.2 };
-/** The street runs the width of the ground (GROUND_SIZE in Ground.ts), out into the haze both ways. */
-const ROAD_LENGTH = 4000;
+/** The street's center line: dashes this long and wide, one every `step` along, the first centered at `first`. */
+const DASH = { length: 0.7, width: 0.06, step: 1.6, first: 1.0 };
+
+const glsl = (n: number) => n.toFixed(4);
+
+/**
+ * The street, painted by the ground plane's shader (groundMaterial in
+ * Grass.ts), so it runs the width of the ground into the haze. It used to be
+ * a thin box laid on the ground, so close to it in depth that the ground
+ * showed through in jags down low and swallowed it zoomed out. The edges
+ * and dashes are smoothed over a pixel, so they stay clean at any distance.
+ */
+export const STREET_GLSL = `uniform vec3 streetColor;
+uniform vec3 streetLine;
+vec3 paintStreet( vec3 color, vec2 p ) {
+  float across = abs( p.y - ${glsl(ROAD_Z)} );
+  float aaAcross = fwidth( p.y ) + 1e-4;
+  color = mix( color, streetColor, 1.0 - smoothstep( ${glsl(ROAD_WIDTH / 2)} - aaAcross, ${glsl(ROAD_WIDTH / 2)} + aaAcross, across ) );
+  float along = abs( fract( ( p.x - ${glsl(DASH.first)} ) / ${glsl(DASH.step)} + 0.5 ) - 0.5 ) * ${glsl(DASH.step)};
+  float aaAlong = fwidth( p.x ) + 1e-4;
+  float dash = ( 1.0 - smoothstep( ${glsl(DASH.length / 2)} - aaAlong, ${glsl(DASH.length / 2)} + aaAlong, along ) )
+    * ( 1.0 - smoothstep( ${glsl(DASH.width / 2)} - aaAcross, ${glsl(DASH.width / 2)} + aaAcross, across ) );
+  return mix( color, streetLine, dash );
+}`;
+
+/** The street's colors, for STREET_GLSL. */
+export function streetUniforms(): Record<string, THREE.IUniform> {
+  return { streetColor: { value: colorOf('slateLight') }, streetLine: { value: colorOf('white') } };
+}
 
 const unitBox = new THREE.BoxGeometry(1, 1, 1);
 const unitCylinder = new THREE.CylinderGeometry(0.5, 0.5, 1, 12);
@@ -158,7 +185,7 @@ export class SiteYard {
   constructor() {
     this.root.name = 'site-yard';
     this.worked.name = 'worked-plot';
-    this.root.add(...[this.createFence(), this.createCabins(), this.createWelfare(), this.createLighting(), this.createGate(), this.createRoad()].map(bake), this.worked);
+    this.root.add(...[this.createFence(), this.createCabins(), this.createWelfare(), this.createLighting(), this.createGate(), this.createRamp()].map(bake), this.worked);
     this.worked.add(this.createRoads(), bake(this.createLaydown()));
     this.setWorked(false);
   }
@@ -277,13 +304,10 @@ export class SiteYard {
     return gate;
   }
 
-  /** The street in front of the site, and the ramp from it up through the gate to the depot. */
-  private createRoad(): THREE.Group {
+  /** The ramp from the street up through the gate to the depot's front edge. The street itself is painted on the ground (STREET_GLSL). */
+  private createRamp(): THREE.Group {
     const group = new THREE.Group();
-    group.name = 'road';
-    group.add(block(materials.solid('slateLight', 1), 0, GROUND_Y, ROAD_Z, ROAD_LENGTH, 0.004, ROAD_WIDTH));
-    for (let x = -ROAD_LENGTH / 2 + 1; x <= ROAD_LENGTH / 2 - 1; x += 1.6) group.add(block(materials.solid('white'), x, GROUND_Y + 0.004, ROAD_Z, 0.7, 0.003, 0.06));
-    // The ramp: a slope from the road up to the depot's front edge.
+    group.name = 'ramp';
     const rise = DEPOT_Y - GROUND_Y;
     const run = RAMP.end - RAMP.start;
     group.add(mesh(unitBox, materials.solid('slate'), { x: (GATE.from + GATE.to) / 2, y: GROUND_Y + rise / 2, z: (RAMP.start + RAMP.end) / 2, sx: GATE.to - GATE.from - 0.2, sy: 0.03, sz: Math.hypot(run, rise), rx: Math.atan2(rise, run) }));

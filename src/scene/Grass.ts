@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { hashString, mulberry32, randomRange } from '../core/rng';
 import { clamp } from '../core/time';
 import { colorOf } from './materials';
-import { FENCED, GATE, ROAD_WIDTH, ROAD_Z } from './SiteYard';
+import { FENCED, GATE, ROAD_WIDTH, ROAD_Z, STREET_GLSL, streetUniforms } from './SiteYard';
 
 // Grass for the plot and the lawn round the site. Every tuft is a few thin
 // three sided blades leaning out from its middle, dark at the root and light
@@ -11,7 +11,8 @@ import { FENCED, GATE, ROAD_WIDTH, ROAD_Z } from './SiteYard';
 // blades, so they stand out from it. The lawn itself is drawn on the ground
 // plane by a shader, with the same patches, and fades into the theme's
 // ground away from the fence. The tufts fade into that ground the same way,
-// and thin out and shrink as they go.
+// and thin out and shrink as they go. The same shader paints the street
+// across the lawn.
 
 /** The lawn is all green this far out from the fence, then fades into the ground by LAWN_FADE_END. */
 const LAWN_FADE_START = 14;
@@ -239,22 +240,24 @@ export function tuftMesh(name: string, material: THREE.Material, spots: readonly
  * The ground plane's material. Its color is the theme's ground, which theme
  * changes tween; the shader lays the lawn over it by distance from the fence,
  * in the turf's darker shade and with the patches, so the lawn fades into
- * that ground whatever the theme.
+ * that ground whatever the theme, and paints the street over both.
  */
-export function lawnMaterial(lawnColor: THREE.Color): THREE.MeshStandardMaterial {
+export function groundMaterial(lawnColor: THREE.Color): THREE.MeshStandardMaterial {
   const material = new THREE.MeshStandardMaterial({ color: colorOf('white'), roughness: 1, metalness: 0 });
   material.onBeforeCompile = (shader) => {
     withLawnPosition(shader);
+    Object.assign(shader.uniforms, streetUniforms());
     shader.uniforms.lawnColor = { value: lawnColor };
     shader.uniforms.lawnShade = { value: new THREE.Vector2(TURF_SHADE, PATCH_DEPTH) };
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
       uniform vec3 lawnColor;
       uniform vec2 lawnShade;
-      ${PATCH_GLSL}`)
+      ${PATCH_GLSL}
+      ${STREET_GLSL}`)
       .replace('#include <color_fragment>', `#include <color_fragment>
       vec3 turf = lawnColor * lawnShade.x * ( 1.0 + lawnShade.y * ( lawnPatch( vLawnXZ ) * 2.0 - 1.0 ) );
-      diffuseColor.rgb = mix( turf, diffuseColor.rgb, lawnFadeAt( vLawnXZ ) );`);
+      diffuseColor.rgb = paintStreet( mix( turf, diffuseColor.rgb, lawnFadeAt( vLawnXZ ) ), vLawnXZ );`);
   };
   material.customProgramCacheKey = () => 'lawn-ground';
   return material;

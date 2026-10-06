@@ -6,7 +6,7 @@ import { formatDateTitle } from '../core/time';
 import { FONT_HEADING, context2d, font } from './canvasText';
 import { PLOT_TOP_Y } from './Foundation';
 import { colorOf, materials } from './materials';
-import { lawnMaterial, lawnSpots, plotSpots, tuftMaterial, tuftMesh, turfColor } from './Grass';
+import { groundMaterial, lawnSpots, plotSpots, tuftMaterial, tuftMesh, turfColor } from './Grass';
 import { SiteYard } from './SiteYard';
 
 // The ground, the plot the tower stands on, the depot pad, and the site sign
@@ -70,7 +70,7 @@ export class Ground {
   constructor(sign: SignPlacement | null) {
     this.root.name = sign ? 'ground' : 'side-ground';
 
-    this.groundMaterial = lawnMaterial(this.lawnColor);
+    this.groundMaterial = groundMaterial(this.lawnColor);
     if (sign) {
       const ground = new THREE.Mesh(new THREE.PlaneGeometry(GROUND_SIZE, GROUND_SIZE), this.groundMaterial);
       ground.rotation.x = -Math.PI / 2;

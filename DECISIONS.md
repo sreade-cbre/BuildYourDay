@@ -993,6 +993,17 @@ what was decided and why. Section numbers refer to `TIME_TOWER_SPEC.md`.
     more against it. Same count and triangles as decision 43; a mid build
     frame at a pixel ratio of 2 costs 2.4 ms more with the lawn than
     without, about what it did.
+45. **A street that holds steady (your report, October 6, 2026: "the
+    road glitches out").** The street was a box 0.004 units thick laid on
+    the ground plane, which is two triangles 4,000 units across. Their
+    depths came so close that the ground showed through the street in jags
+    that moved with the camera, worst low down along it, and zoomed out
+    the lawn swallowed it almost whole. The ground plane's shader now
+    paints the street and its center dashes itself (`STREET_GLSL` in
+    `src/scene/SiteYard.ts`), with the edges smoothed over a pixel, so
+    nothing lies on the ground to fight it. Checked low along the street,
+    at a grazing angle, zoomed out, and in both themes: straight and solid
+    every time. The ramp up to the gate is still its own slope.
 40. **Never beneath the ground (your call, October 6, 2026).** The first
     free view let the camera tilt under the ground and look up at the
     underside of the plot. The camera now stays at least 0.3 units above
