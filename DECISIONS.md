@@ -949,10 +949,10 @@ what was decided and why. Section numbers refer to `TIME_TOWER_SPEC.md`.
 39. **A free view (your call, October 6, 2026).** Spec 8.7 held the camera
     between 0.25 and 0.47 pi from straight overhead, between 12 and 80
     units away, and without panning. Now a drag on empty space turns the
-    view to any angle, all the way round and from straight above to
-    underneath; the wheel zooms from 1 unit to 300, or three times the
-    default framing on a very long day; and the right button or a Shift
-    drag pans. A drag that starts on a block still moves or resizes it, and
+    view to any angle above the ground, all the way round and from
+    straight above down to looking up from just above the ground; the
+    wheel zooms from 1 unit to 300, or three times the default framing on a
+    very long day; and the right button or a Shift drag pans. A drag that starts on a block still moves or resizes it, and
     Shift with the wheel over the selected block still resizes it. Reset
     view, the idle orbit, and the reframing for a new roof work as before.
     So the site never fades away zoomed out, the fog of spec 8.8 starts 60
@@ -993,3 +993,13 @@ what was decided and why. Section numbers refer to `TIME_TOWER_SPEC.md`.
     more against it. Same count and triangles as decision 43; a mid build
     frame at a pixel ratio of 2 costs 2.4 ms more with the lawn than
     without, about what it did.
+40. **Never beneath the ground (your call, October 6, 2026).** The first
+    free view let the camera tilt under the ground and look up at the
+    underside of the plot. The camera now stays at least 0.3 units above
+    the plot's top: how far it can tilt under what it looks at is set each
+    frame from how high that point stands and how far off the camera is,
+    so close to the tower it can still look up from ground level. Panning
+    also keeps what it looks at above the ground, no more than 40 units out
+    from the tower, and no higher than the day's tower plus 10, so a pan
+    can never lose the site in empty sky. Tried with real drags, pans, and
+    zooms: the camera never went below the floor.

@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { easeInOutCubic } from '../anim/easing';
 import { BLOCK_FOOTPRINT, DEPOT_OFFSET, PLOT_SIZE } from '../core/layout';
 import type { Theme } from '../core/model';
+import { PLOT_TOP_Y } from './Foundation';
 import { DEPOT_WIDTH, GROUND_Y } from './Ground';
 import { colorOf } from './materials';
 
@@ -21,7 +22,11 @@ const FRAME_MARGIN = 0.15;
 const SIDE_MARGIN = 0.08;
 /** The closest the default framing comes. */
 const MIN_DISTANCE = 12;
-/** How close in and far out the user can zoom: the view is free. */
+/** The lowest the camera goes: just above the plot, so the view never looks up from under the ground. */
+const CAMERA_FLOOR = PLOT_TOP_Y + 0.3;
+/** Panning keeps what the camera looks at this far out from the tower at most, and no higher than the day's tower plus this, so the site is never lost. */
+const PAN_REACH = { out: 40, above: 10 };
+/** How close in and far out the user can zoom. */
 const ZOOM = { min: 1, max: 300 };
 /** Fog starts and ends this far from the camera at the default framing (spec 8.8), and moves out as the user zooms out. */
 const FOG = { near: 60, far: 140 };
@@ -59,6 +64,7 @@ export class SceneRoot {
   private readonly sun: THREE.DirectionalLight;
   private readonly fog: THREE.Fog;
   private readonly animators = new Set<Animator>();
+  private readonly panHeld = new THREE.Vector3();
   private readonly renderHooks = new Set<(camera: THREE.Camera) => void>();
   private readonly viewHooks = new Set<() => void>();
   private readonly showHooks = new Set<() => void>();
@@ -94,11 +100,12 @@ export class SceneRoot {
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
-    // The view is free: drag to turn to any angle, straight down to straight
-    // up; zoom right in or far out; and pan with the right button, or a
-    // drag with shift held, to look at any part of the site.
+    // The view is free above the ground: drag to turn to any angle, from
+    // straight down to looking up from just above the ground; zoom right in
+    // or far out; and pan with the right button, or a drag with shift held,
+    // to look at any part of the site. keepAboveGround sets how far it tilts.
     this.controls.minPolarAngle = 0;
-    this.controls.maxPolarAngle = Math.PI;
+    this.controls.maxPolarAngle = 0.5 * Math.PI;
     this.controls.minDistance = ZOOM.min;
     this.controls.maxDistance = ZOOM.max;
     this.controls.enablePan = true;
@@ -250,7 +257,9 @@ export class SceneRoot {
     for (const animator of [...this.animators]) {
       if (!animator(dt)) this.animators.delete(animator);
     }
+    this.keepAboveGround();
     const cameraMoved = this.controls.update(dt);
+    if (this.camera.position.y < CAMERA_FLOOR) this.camera.position.y = CAMERA_FLOOR;
 
     if (animating || cameraMoved || this.needsRender) {
       this.needsRender = false;
@@ -327,6 +336,29 @@ export class SceneRoot {
     }
     this.notifyView();
     this.requestRender();
+  }
+
+  /**
+   * Keeps the camera above the ground. Panning cannot take the target below
+   * it, or so far off that the site is lost, and the furthest the camera
+   * tilts under its target is set from how high the target stands and how
+   * far away the camera is, so it can look up at the tower from just above
+   * the ground but never from beneath.
+   */
+  private keepAboveGround(): void {
+    const { target } = this.controls;
+    const held = this.panHeld.set(
+      THREE.MathUtils.clamp(target.x, -PAN_REACH.out, PAN_REACH.out),
+      THREE.MathUtils.clamp(target.y, CAMERA_FLOOR, Math.max(CAMERA_FLOOR, this.towerHeight + PAN_REACH.above)),
+      THREE.MathUtils.clamp(target.z, -PAN_REACH.out, PAN_REACH.out),
+    );
+    if (!held.equals(target)) {
+      // Move the camera with the target, so the view slides rather than turns.
+      this.camera.position.add(held).sub(target);
+      target.copy(held);
+    }
+    const room = (target.y - CAMERA_FLOOR) / Math.max(1e-6, this.camera.position.distanceTo(target));
+    this.controls.maxPolarAngle = room >= 1 ? Math.PI : Math.acos(-room);
   }
 
   /** Pushes the fog back as the camera zooms out past the default framing, so the site never fades away. */
