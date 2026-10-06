@@ -120,8 +120,10 @@ and deleting a block leaves free time behind.
   viewing stays put.
 - **Highlight a category** by clicking it in the legend; click again or press
   Escape to clear.
-- **Orbit** by dragging empty space and zoom with the wheel. A drag that
-  starts on a block never orbits. Reset view or R returns to the default view.
+- **Look from any angle** by dragging empty space: all the way round, from
+  straight above to underneath. Zoom with the wheel, right in or far out,
+  and pan with the right button or a Shift drag. A drag that starts on a
+  block never orbits. Reset view or R returns to the default view.
 - **List view**: press Tab once on load to reveal Open list view, a plain
   table with the same edits. It is the whole page in browsers without WebGL2.
 

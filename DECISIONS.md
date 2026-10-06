@@ -943,3 +943,20 @@ what was decided and why. Section numbers refer to `TIME_TOWER_SPEC.md`.
     and cast no shadows. Mid build at 11:20 in headless Chrome, a frame
     every 16.7 ms, 95th percentile 16.8 ms, with no console errors through
     theme changes both ways.
+
+### The view
+
+39. **A free view (your call, October 6, 2026).** Spec 8.7 held the camera
+    between 0.25 and 0.47 pi from straight overhead, between 12 and 80
+    units away, and without panning. Now a drag on empty space turns the
+    view to any angle, all the way round and from straight above to
+    underneath; the wheel zooms from 1 unit to 300, or three times the
+    default framing on a very long day; and the right button or a Shift
+    drag pans. A drag that starts on a block still moves or resizes it, and
+    Shift with the wheel over the selected block still resizes it. Reset
+    view, the idle orbit, and the reframing for a new roof work as before.
+    So the site never fades away zoomed out, the fog of spec 8.8 starts 60
+    and ends 140 units from the camera at the default framing and moves out
+    as the view zooms past it, the camera's far plane grows with the zoom
+    limit, and the ground plane is now 4,000 units across, so its edge
+    never shows.

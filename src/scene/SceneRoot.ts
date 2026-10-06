@@ -19,8 +19,12 @@ const TARGET_HEIGHT_RATIO = 0.45;
 /** Share of the viewport kept clear above and below the tower. */
 const FRAME_MARGIN = 0.15;
 const SIDE_MARGIN = 0.08;
+/** The closest the default framing comes. */
 const MIN_DISTANCE = 12;
-const MAX_DISTANCE = 80;
+/** How close in and far out the user can zoom: the view is free. */
+const ZOOM = { min: 1, max: 300 };
+/** Fog starts and ends this far from the camera at the default framing (spec 8.8), and moves out as the user zooms out. */
+const FOG = { near: 60, far: 140 };
 const FRAME_TWEEN_SECONDS = 0.8;
 const LIGHT_DIRECTION = new THREE.Vector3(12, 30, 18).normalize();
 /** Label canvas pixels shown at this many screen pixels at the default view. */
@@ -90,12 +94,15 @@ export class SceneRoot {
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
-    this.controls.minPolarAngle = 0.25 * Math.PI;
-    this.controls.maxPolarAngle = 0.47 * Math.PI;
-    this.controls.minDistance = MIN_DISTANCE;
-    this.controls.maxDistance = MAX_DISTANCE;
-    this.controls.enablePan = false;
-    this.controls.screenSpacePanning = false;
+    // The view is free: drag to turn to any angle, straight down to straight
+    // up; zoom right in or far out; and pan with the right button, or a
+    // drag with shift held, to look at any part of the site.
+    this.controls.minPolarAngle = 0;
+    this.controls.maxPolarAngle = Math.PI;
+    this.controls.minDistance = ZOOM.min;
+    this.controls.maxDistance = ZOOM.max;
+    this.controls.enablePan = true;
+    this.controls.screenSpacePanning = true;
     this.controls.addEventListener('change', () => this.requestRender());
     // A drag takes over from any framing tween.
     this.controls.addEventListener('start', () => this.stopCameraTween());
@@ -110,7 +117,7 @@ export class SceneRoot {
     this.sun.shadow.bias = -0.0004;
     this.scene.add(hemisphere, this.sun, this.sun.target);
 
-    this.fog = new THREE.Fog(colorOf('lightGray'), 60, 140);
+    this.fog = new THREE.Fog(colorOf('lightGray'), FOG.near, FOG.far);
     this.scene.fog = this.fog;
     this.setTheme(theme);
 
@@ -247,6 +254,7 @@ export class SceneRoot {
 
     if (animating || cameraMoved || this.needsRender) {
       this.needsRender = false;
+      this.followFog();
       for (const hook of this.renderHooks) hook(this.camera);
       this.renderer.render(this.scene, this.camera);
     }
@@ -300,9 +308,11 @@ export class SceneRoot {
   frameTower(towerHeight: number, animate: boolean, seconds = FRAME_TWEEN_SECONDS): void {
     this.towerHeight = towerHeight;
     this.defaultDistance = this.fitDistance(towerHeight);
-    // The spec's 80 unit limit cannot frame very long day windows, so the
-    // limit grows to whatever the default framing needs.
-    this.controls.maxDistance = Math.max(MAX_DISTANCE, this.defaultDistance);
+    // Very long day windows need the zoom limit to grow with the default
+    // framing, and the far plane with it, so zoomed right out nothing is cut off.
+    this.controls.maxDistance = Math.max(ZOOM.max, 3 * this.defaultDistance);
+    this.camera.far = Math.max(500, this.controls.maxDistance + 200);
+    this.camera.updateProjectionMatrix();
     this.fitShadowCamera(towerHeight);
 
     const target = this.framingTarget(towerHeight);
@@ -317,6 +327,13 @@ export class SceneRoot {
     }
     this.notifyView();
     this.requestRender();
+  }
+
+  /** Pushes the fog back as the camera zooms out past the default framing, so the site never fades away. */
+  private followFog(): void {
+    const out = Math.max(0, this.camera.position.distanceTo(this.controls.target) - this.defaultDistance);
+    this.fog.near = FOG.near + out;
+    this.fog.far = FOG.far + out;
   }
 
   /** Returns to the default framing (the "Reset view" control). */

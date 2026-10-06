@@ -25,7 +25,8 @@ export const DEPOT_DEPTH = 8;
  * faces in one plane, which flickers along the seam.
  */
 export const DEPOT_TOP_Y = PLOT_TOP_Y - 0.02;
-const GROUND_SIZE = 200;
+/** Wide enough that, however far the view zooms or pans, the fog hides its edge first. */
+const GROUND_SIZE = 4000;
 const GRASS_COUNT = 2500;
 /** Blades in the lawn outside the fence, out to LAWN_BLADE_REACH and thinning as they go. */
 const LAWN_BLADE_COUNT = 6000;
