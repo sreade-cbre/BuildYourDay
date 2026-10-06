@@ -18,7 +18,10 @@ const COLUMN_SIZE = 0.12;
 export const BEAM_SIZE = 0.1;
 /** Most beam rings one block can need: 96 floors (8 hours at 5 minute slots). */
 const MAX_RINGS = 96;
-const PANEL_POOL = 3;
+const PANEL_POOL = 8;
+/** Bundles the crane brings between pieces: rebar, formwork, or scaffold. */
+const BUNDLE_POOL = 8;
+export type BundleKind = 'rebar' | 'formwork' | 'scaffold';
 const OUTLINE_POINTS = 96;
 /** A stacked block's poured floor: as wide as the block and this thick. */
 const FLOOR_THICKNESS = 0.05;
@@ -33,7 +36,12 @@ const beamGeometry = new THREE.BoxGeometry(1, BEAM_SIZE, BEAM_SIZE);
 const panelGeometry = new THREE.BoxGeometry(BLOCK_FOOTPRINT, 1, 0.1);
 const legGeometry = new THREE.CylinderGeometry(0.012, 0.012, 0.44, 5).translate(0, -0.22, 0);
 const instrumentGeometry = new THREE.BoxGeometry(0.09, 0.07, 0.12);
-const deckGeometry = new THREE.BoxGeometry(DECK_SPAN, DECK_THICKNESS, DECK_SPAN);
+/** A deck goes down in two sheets, front and back. */
+const deckGeometry = new THREE.BoxGeometry(DECK_SPAN, DECK_THICKNESS, DECK_SPAN / 2 - 0.01);
+const CONCRETE_THICKNESS = 0.025;
+const concreteGeometry = new THREE.BoxGeometry(DECK_SPAN, CONCRETE_THICKNESS, DECK_SPAN).translate(0, CONCRETE_THICKNESS / 2, 0);
+const bundleBase = new THREE.BoxGeometry(0.62, 0.05, 0.42);
+const bundleLoad = new THREE.BoxGeometry(0.56, 0.16, 0.36);
 const rebarGeometry = new THREE.BoxGeometry(SLAB_SIZE - 0.3, 0.025, 0.025);
 const stakeGeometry = new THREE.BoxGeometry(0.035, STAKE_HEIGHT, 0.035).translate(0, STAKE_HEIGHT / 2, 0);
 const flagGeometry = new THREE.BoxGeometry(0.1, 0.06, 0.01).translate(0.05, STAKE_HEIGHT - 0.04, 0);
@@ -58,8 +66,14 @@ export class SiteProps {
   readonly pit: THREE.Mesh;
   /** The rebar mat, tied over the pit before the slab is poured. */
   readonly rebar: THREE.InstancedMesh;
-  /** A deck laid on each floor's ring of beams. */
+  /** Two deck sheets laid on each floor's ring of beams. */
   readonly decks: THREE.InstancedMesh;
+  /** Each floor's concrete, poured over its deck. */
+  readonly concrete: THREE.InstancedMesh;
+  /** A frame put up piece by piece: each floor's four columns. */
+  readonly columnPieces: THREE.InstancedMesh;
+  /** Bundles on their way up, or set down where the work is. */
+  readonly bundles: Array<{ root: THREE.Group; load: THREE.Mesh }> = [];
   /** The concrete pump line up the tower's right side to a stacked floor. */
   readonly pump = new THREE.Group();
   /** The roof cap on its way up on the crane. */
@@ -160,12 +174,40 @@ export class SiteProps {
     }
     this.rebar.count = 0;
     this.rebar.frustumCulled = false;
-    this.decks = new THREE.InstancedMesh(deckGeometry, materials.solid('slatePale'), MAX_RINGS);
+    this.decks = new THREE.InstancedMesh(deckGeometry, materials.solid('slatePale'), MAX_RINGS * 2);
     this.decks.castShadow = true;
     this.decks.receiveShadow = true;
     this.decks.frustumCulled = false;
-    for (let i = 0; i < MAX_RINGS; i++) this.decks.setMatrixAt(i, HIDDEN);
+    for (let i = 0; i < MAX_RINGS * 2; i++) this.decks.setMatrixAt(i, HIDDEN);
     this.decks.count = 0;
+    this.concrete = new THREE.InstancedMesh(concreteGeometry, materials.solid('lightGray', 0.95), MAX_RINGS);
+    this.concrete.receiveShadow = true;
+    this.concrete.frustumCulled = false;
+    for (let i = 0; i < MAX_RINGS; i++) this.concrete.setMatrixAt(i, HIDDEN);
+    this.concrete.count = 0;
+    this.columnPieces = new THREE.InstancedMesh(columnGeometry, materials.solid('slateDark'), MAX_RINGS * 4);
+    this.columnPieces.castShadow = true;
+    this.columnPieces.frustumCulled = false;
+    for (let i = 0; i < MAX_RINGS * 4; i++) this.columnPieces.setMatrixAt(i, HIDDEN);
+    this.columnPieces.count = 0;
+    const bundleMaterials: Record<BundleKind, THREE.Material> = {
+      rebar: materials.solid('slateDark'),
+      formwork: materials.solid('slatePale'),
+      scaffold: materials.solid('slateLight', 0.6),
+    };
+    for (let i = 0; i < BUNDLE_POOL; i++) {
+      const root = new THREE.Group();
+      const base = new THREE.Mesh(bundleBase, materials.solid('slate'));
+      base.position.y = 0.025;
+      const load = new THREE.Mesh(bundleLoad, bundleMaterials.rebar);
+      load.position.y = 0.13;
+      base.castShadow = true;
+      load.castShadow = true;
+      root.add(base, load);
+      root.visible = false;
+      root.userData.materials = bundleMaterials;
+      this.bundles.push({ root, load });
+    }
     this.roof = new THREE.Mesh(roofGeometry, materials.blockCap('navy'));
     this.roof.castShadow = true;
     const pipe = materials.solid('slateDark');
@@ -215,7 +257,7 @@ export class SiteProps {
     fadeHolder.visible = false;
 
     this.root.add(this.tripod, this.outline, ...this.pads, this.slab, ...this.columns, this.beams, ...this.panels, this.cladding.root, fadeHolder);
-    this.root.add(this.floor, ...this.stakes, this.pit, this.rebar, this.decks, this.pump, this.roof);
+    this.root.add(this.floor, ...this.stakes, this.pit, this.rebar, this.decks, this.concrete, this.columnPieces, this.pump, this.roof, ...this.bundles.map((b) => b.root));
     this.reset();
   }
 
@@ -304,18 +346,67 @@ export class SiteProps {
     this.rebar.count = Math.round(Math.min(1, Math.max(0, share)) * REBAR_BARS * 2);
   }
 
-  /** Floor decks there can be, one per beam ring. */
-  setDeckCount(decks: number): void {
-    this.decks.count = Math.max(0, Math.min(MAX_RINGS, decks));
+  /** How many floors the frame pieces, decks, and concrete can use. */
+  setFloorCount(floors: number): void {
+    const n = Math.max(0, Math.min(MAX_RINGS, floors));
+    this.decks.count = n * 2;
+    this.concrete.count = n;
+    this.columnPieces.count = n * 4;
+    this.beams.count = n * 4;
   }
 
-  /** Lays a deck with its underside on a ring at `y`, spreading from the middle (0) to full (1). */
-  setDeck(index: number, y: number, share: number): void {
+  /** One deck sheet of a floor, front (0) or back (1), its underside at `y`, slid in from 0 to 1. */
+  setDeckSheet(floor: number, sheet: number, y: number, share: number): void {
     const matrix = new THREE.Matrix4();
     if (share <= 0) matrix.copy(HIDDEN);
-    else matrix.compose(new THREE.Vector3(0, y + DECK_THICKNESS / 2, 0), new THREE.Quaternion(), new THREE.Vector3(share, 1, share));
-    this.decks.setMatrixAt(index, matrix);
+    else {
+      const z = (sheet === 0 ? 1 : -1) * (DECK_SPAN / 4);
+      matrix.compose(new THREE.Vector3((1 - share) * 0.9, y + DECK_THICKNESS / 2, z), new THREE.Quaternion(), new THREE.Vector3(Math.max(0.05, share), 1, 1));
+    }
+    this.decks.setMatrixAt(floor * 2 + sheet, matrix);
     this.decks.instanceMatrix.needsUpdate = true;
+  }
+
+  /** A floor's concrete on its deck at `y`, from none (0) to poured (1). */
+  setConcrete(floor: number, y: number, share: number): void {
+    const matrix = new THREE.Matrix4();
+    if (share <= 0) matrix.copy(HIDDEN);
+    else matrix.compose(new THREE.Vector3(0, y, 0), new THREE.Quaternion(), new THREE.Vector3(1, share, 1));
+    this.concrete.setMatrixAt(floor, matrix);
+    this.concrete.instanceMatrix.needsUpdate = true;
+  }
+
+  /** A column of the frame, `index` = floor * 4 + corner, standing on `baseY`, or hidden. */
+  setColumnPiece(index: number, x: number, baseY: number, z: number, height: number, visible = true): void {
+    const matrix = new THREE.Matrix4();
+    if (!visible) matrix.copy(HIDDEN);
+    else matrix.compose(new THREE.Vector3(x, baseY, z), new THREE.Quaternion(), new THREE.Vector3(1, height, 1));
+    this.columnPieces.setMatrixAt(index, matrix);
+    this.columnPieces.instanceMatrix.needsUpdate = true;
+  }
+
+  /**
+   * One beam of a floor's ring, centered at a point: `slot` 0 front and 1
+   * back run along x, 2 right and 3 left along z, as in setRing.
+   */
+  setBeam(ring: number, slot: number, x: number, y: number, z: number, visible = true): void {
+    const matrix = new THREE.Matrix4();
+    if (!visible) matrix.copy(HIDDEN);
+    else {
+      const turn = slot >= 2 ? new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2) : new THREE.Quaternion();
+      matrix.compose(new THREE.Vector3(x, y, z), turn, new THREE.Vector3(BLOCK_FOOTPRINT - 0.02, 1, 1));
+    }
+    this.beams.setMatrixAt(ring * 4 + slot, matrix);
+    this.beams.instanceMatrix.needsUpdate = true;
+  }
+
+  /** A bundle at a point, its base on it, or hidden. */
+  setBundle(index: number, point: THREE.Vector3 | null, kind: BundleKind = 'rebar'): void {
+    const bundle = this.bundles[index % BUNDLE_POOL]!;
+    bundle.root.visible = point !== null;
+    if (!point) return;
+    bundle.root.position.copy(point);
+    bundle.load.material = (bundle.root.userData.materials as Record<BundleKind, THREE.Material>)[kind];
   }
 
   /** The pump line from the ground at `baseY` up to a floor at `topY`, raised from 0 to 1. */
@@ -381,11 +472,12 @@ export class SiteProps {
   }
 
   /** A facade panel: front face plate, `height` tall, centered at (x, y, z). */
-  setPanel(index: number, x: number, y: number, z: number, height: number, opacity: number): void {
+  setPanel(index: number, x: number, y: number, z: number, height: number, opacity: number, width = BLOCK_FOOTPRINT, turn = 0): void {
     const panel = this.panels[index % PANEL_POOL]!;
     panel.visible = opacity > 0.01;
     panel.position.set(x, y, z);
-    panel.scale.set(1, Math.max(0.01, height), 1);
+    panel.rotation.y = turn;
+    panel.scale.set(width / BLOCK_FOOTPRINT, Math.max(0.01, height), 1);
     (panel.material as THREE.MeshStandardMaterial).opacity = opacity;
   }
 
@@ -422,9 +514,12 @@ export class SiteProps {
     for (const stake of this.stakes) stake.visible = false;
     this.pit.visible = false;
     this.rebar.count = 0;
-    for (let i = 0; i < MAX_RINGS; i++) this.decks.setMatrixAt(i, HIDDEN);
-    this.decks.instanceMatrix.needsUpdate = true;
-    this.decks.count = 0;
+    for (const mesh of [this.decks, this.concrete, this.columnPieces]) {
+      for (let i = 0; i < mesh.count; i++) mesh.setMatrixAt(i, HIDDEN);
+      mesh.instanceMatrix.needsUpdate = true;
+      mesh.count = 0;
+    }
+    for (const bundle of this.bundles) bundle.root.visible = false;
     this.pump.visible = false;
     this.roof.visible = false;
     this.tripod.visible = false;

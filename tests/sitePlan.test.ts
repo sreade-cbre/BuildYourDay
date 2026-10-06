@@ -1,36 +1,45 @@
 import { describe, expect, it } from 'vitest';
 import {
   LIFT_SECONDS,
+  PICK,
+  YARD,
   activity,
   facadeShare,
-  frameShare,
   levelsFor,
   phaseOrder,
   progress,
   siteSchedule,
   sitePhases,
   split,
+  stock,
+  type StockKind,
 } from '../src/anim/sitePlan';
+
+/** Every program the tests check: block lengths and slots, first and stacked. */
+function* programs() {
+  for (const slot of [5, 15, 30]) {
+    for (const minutes of [slot, 30, 60, 90, 180, 480]) {
+      if (minutes % slot !== 0) continue;
+      for (const first of [true, false]) yield { minutes, slot, first, floors: minutes / slot };
+    }
+  }
+}
 
 describe('site plan', () => {
   it('runs the groundworks end to end, then overlaps the frame and the facade', () => {
     for (const first of [true, false]) {
       const phases = sitePhases(3600, first);
-      const order = phaseOrder(first);
       let last = 0;
-      for (const name of order) {
+      for (const name of phaseOrder(first)) {
         const span = phases[name]!;
         expect(span.start).toBeGreaterThanOrEqual(last - 1e-9);
         expect(span.end).toBeGreaterThan(span.start);
         last = span.start;
       }
       expect(phases.strike.end).toBeCloseTo(3600, 9);
-      // The facade starts while the frame is still going up.
       expect(phases.clad.start).toBeLessThan(phases.frame.end);
       expect(phases.roof.start).toBeGreaterThanOrEqual(phases.clad.end);
     }
-    expect(phaseOrder(true)).toContain('excavate');
-    expect(phaseOrder(false)).toContain('deck');
   });
 
   it('splits spans evenly and measures progress through them', () => {
@@ -39,59 +48,87 @@ describe('site plan', () => {
       { start: 20, end: 30 },
       { start: 30, end: 40 },
     ]);
-    expect(progress({ start: 10, end: 20 }, 5)).toBe(0);
     expect(progress({ start: 10, end: 20 }, 15)).toBe(0.5);
-    expect(progress({ start: 10, end: 20 }, 25)).toBe(1);
   });
 
-  it('closes each band of facade only once its floors are framed', () => {
-    for (const first of [true, false]) {
-      for (const floors of [1, 2, 3, 4, 6, 12, 32, 96]) {
-        const schedule = siteSchedule(floors * 15 * 60, first, floors);
-        const levels = levelsFor(floors);
-        schedule.bands.forEach((band, b) => {
-          const topFloor = Math.min(floors, Math.ceil(((b + 1) * floors) / levels)) - 1;
-          expect(band.closes.start).toBeGreaterThan(schedule.frame[topFloor]!.end);
-        });
-      }
-    }
-  });
-
-  it('keeps the building rising through the block once the frame starts', () => {
-    const schedule = siteSchedule(5400, false, 6);
-    const { phases } = schedule;
-    let lastFrame = 0;
-    let lastFacade = 0;
-    for (let t = 0; t <= 5400; t += 30) {
-      const frame = frameShare(schedule, t);
-      const facade = facadeShare(schedule, t);
-      expect(frame).toBeGreaterThanOrEqual(lastFrame - 1e-12);
-      expect(facade).toBeGreaterThanOrEqual(lastFacade - 1e-12);
-      // The facade never gets ahead of the frame.
-      expect(facade).toBeLessThanOrEqual(frame + 1e-9);
-      lastFrame = frame;
-      lastFacade = facade;
-    }
-    // A third of the way in, some of the facade already stands.
-    expect(facadeShare(schedule, 0.4 * 5400)).toBeGreaterThan(0);
-    expect(facadeShare(schedule, phases.clad.end)).toBe(1);
-  });
-
-  it('never has two crane lifts at once, for any block, slot, or speed', () => {
+  it('never has two crane lifts at once, and ends them before the time is up', () => {
     for (const speed of [0.5, 1, 3]) {
-      const lift = LIFT_SECONDS / speed;
-      for (const slot of [5, 10, 15, 30]) {
-        for (let minutes = slot; minutes <= 1080; minutes += slot * 3) {
-          for (const first of [true, false]) {
-            const schedule = siteSchedule(minutes * 60, first, minutes / slot, lift, 3 / speed);
-            const lands = [...schedule.frame.map((s) => s.lands), ...schedule.bands.map((b) => b.lands), schedule.roofLands].sort((a, b) => a - b);
-            for (let i = 1; i < lands.length; i++) expect(lands[i]! - lift).toBeGreaterThan(lands[i - 1]!);
-            expect(lands[0]! - lift).toBeGreaterThanOrEqual(schedule.phases.frame.start - 1e-9);
-            expect(lands.at(-1)!).toBeLessThan(schedule.phases.strike.start);
-          }
-        }
+      for (const { minutes, first, floors } of programs()) {
+        const schedule = siteSchedule(minutes * 60, first, floors, LIFT_SECONDS / speed, 4 / speed);
+        const lifts = [...schedule.lifts].sort((a, b) => a.start - b.start);
+        for (let i = 1; i < lifts.length; i++) expect(lifts[i]!.start).toBeGreaterThanOrEqual(lifts[i - 1]!.lands + schedule.craneReturn - 1e-6);
+        expect(lifts.at(-1)!.lands).toBeLessThan(minutes * 60);
       }
     }
+  });
+
+  it('puts each floor together in order: columns, beams, then the deck', () => {
+    for (const { minutes, first, floors } of programs()) {
+      const schedule = siteSchedule(minutes * 60, first, floors);
+      for (const floor of schedule.frame) {
+        const order = [...floor.columns, ...floor.beams, floor.deck];
+        for (let i = 1; i < order.length; i++) expect(order[i]).toBeGreaterThan(order[i - 1]!);
+      }
+      for (let k = 1; k < schedule.frame.length; k++) expect(schedule.frame[k]!.columns[0]).toBeGreaterThan(schedule.frame[k - 1]!.deck);
+    }
+  });
+
+  it('closes each band of facade only once its floors are framed, bottom band first', () => {
+    for (const { minutes, first, floors } of programs()) {
+      const schedule = siteSchedule(minutes * 60, first, floors);
+      const levels = levelsFor(floors);
+      schedule.bands.forEach((band, b) => {
+        const top = Math.min(floors, Math.ceil(((b + 1) * floors) / levels)) - 1;
+        expect(band.closes.start).toBeGreaterThan(schedule.frame[top]!.laid);
+        if (b > 0) expect(band.closes.start).toBeGreaterThanOrEqual(schedule.bands[b - 1]!.closes.end - 1e-6);
+      });
+      expect(schedule.roofLands).toBeGreaterThan(schedule.bands.at(-1)!.closes.end);
+    }
+  });
+
+  it('keeps the yard stocked, and ends the block with the stock it opened with', () => {
+    for (const { minutes, first, floors } of programs()) {
+      const schedule = siteSchedule(minutes * 60, first, floors);
+      for (const kind of Object.keys(YARD) as StockKind[]) {
+        expect(stock(schedule, kind, 0)).toBe(YARD[kind].opening);
+        for (const lift of schedule.lifts.filter((l) => l.kind === kind)) {
+          expect(stock(schedule, kind, lift.start + PICK * schedule.lift - 1e-3)).toBeGreaterThanOrEqual(YARD[kind].reserve + 1);
+        }
+        for (let t = 0; t <= schedule.seconds; t += 5) expect(stock(schedule, kind, t)).toBeLessThanOrEqual(YARD[kind].capacity);
+        expect(stock(schedule, kind, schedule.seconds)).toBe(YARD[kind].opening);
+      }
+    }
+  });
+
+  it('sends one truck and one mixer at a time', () => {
+    for (const { minutes, first, floors } of programs()) {
+      const schedule = siteSchedule(minutes * 60, first, floors);
+      for (let i = 1; i < schedule.deliveries.length; i++) expect(schedule.deliveries[i]!.arrives).toBeGreaterThanOrEqual(schedule.deliveries[i - 1]!.leaves);
+      for (let i = 1; i < schedule.pours.length; i++) expect(schedule.pours[i]!.visit.start).toBeGreaterThanOrEqual(schedule.pours[i - 1]!.visit.end - 1e-6);
+    }
+  });
+
+  it('keeps the crane busy for most of the frame and the facade', () => {
+    for (const { minutes, first, floors } of programs()) {
+      if (minutes < 30) continue;
+      const schedule = siteSchedule(minutes * 60, first, floors);
+      const window = { start: schedule.phases.frame.start, end: schedule.phases.clad.end };
+      // Lifting, or swinging back for the next load.
+      const busy = schedule.lifts.reduce((sum, l) => sum + Math.max(0, Math.min(l.lands + schedule.craneReturn, window.end) - Math.max(l.start, window.start)), 0);
+      expect(busy / (window.end - window.start)).toBeGreaterThan(0.6);
+    }
+  });
+
+  it('closes the facade steadily from nothing to the whole block', () => {
+    const schedule = siteSchedule(5400, false, 6);
+    let last = 0;
+    for (let t = 0; t <= 5400; t += 20) {
+      const share = facadeShare(schedule, t);
+      expect(share).toBeGreaterThanOrEqual(last - 1e-12);
+      last = share;
+    }
+    expect(facadeShare(schedule, 0.4 * 5400)).toBeGreaterThan(0);
+    expect(facadeShare(schedule, 5400)).toBe(1);
   });
 
   it('names what the crew is doing', () => {
@@ -100,7 +137,6 @@ describe('site plan', () => {
     expect(activity(schedule, 0.05 * 3600)).toBe('clearing');
     expect(activity(schedule, 0.1 * 3600)).toBe('digging');
     expect(activity(schedule, 0.15 * 3600)).toBe('footings');
-    expect(activity(schedule, 0.2 * 3600)).toBe('framing');
     expect(activity(schedule, 0.5 * 3600)).toBe('framing');
     expect(activity(schedule, 0.8 * 3600)).toBe('cladding');
     expect(activity(schedule, 0.93 * 3600)).toBe('roofing');

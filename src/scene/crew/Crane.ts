@@ -27,6 +27,9 @@ export interface CranePose {
 }
 
 const cableGeometry = new THREE.CylinderGeometry(0.01, 0.01, 1, 6).translate(0, -0.5, 0);
+/** Sling legs at most: four for a bundle or a roof. */
+const LEGS = 4;
+const DOWN = new THREE.Vector3(0, -1, 0);
 
 export class Crane {
   readonly root = new THREE.Group();
@@ -37,6 +40,7 @@ export class Crane {
   private readonly hookBlock: THREE.Mesh;
   /** Where carried items hang. Children of this move with the hook. */
   readonly hook = new THREE.Group();
+  private readonly legs: THREE.Mesh[] = [];
   private mastHeight = 3;
   private pose: CranePose = { slew: 0, trolley: 2, hookY: 2 };
 
@@ -72,6 +76,12 @@ export class Crane {
     this.cable = new THREE.Mesh(cableGeometry, dark);
     this.hookBlock = box(0.15, 0.2, 0.15, dark);
     this.slewing.add(this.trolley, this.cable, this.hookBlock, this.hook);
+    for (let i = 0; i < LEGS; i++) {
+      const leg = new THREE.Mesh(cableGeometry, dark);
+      leg.visible = false;
+      this.legs.push(leg);
+      this.slewing.add(leg);
+    }
     this.root.add(this.slewing);
     this.setMastHeight(3);
     this.setPose(this.pose);
@@ -116,6 +126,32 @@ export class Crane {
     this.cable.scale.y = Math.max(0.01, cableLength);
     this.hookBlock.position.set(trolley, hookLocalY, 0);
     this.hook.position.set(trolley, hookLocalY - HOOK_HANG, 0);
+    for (const leg of this.legs) leg.visible = false;
+  }
+
+  /**
+   * Rigs a load: sling legs from the hook block down to its lifting points,
+   * given in the crew's frame. Set it after the pose; a new pose takes the
+   * slings off.
+   */
+  setSling(points: ReadonlyArray<THREE.Vector3>): void {
+    const start = new THREE.Vector3(this.hookBlock.position.x, this.hookBlock.position.y - 0.1, 0);
+    const cos = Math.cos(this.pose.slew);
+    const sin = Math.sin(this.pose.slew);
+    const leg = new THREE.Vector3();
+    this.legs.forEach((mesh, i) => {
+      const point = points[i];
+      mesh.visible = point !== undefined;
+      if (!point) return;
+      // Into the slewing unit's frame: from the mast top, turned back by the slew.
+      const dx = point.x - this.root.position.x;
+      const dz = point.z - this.root.position.z;
+      leg.set(dx * cos - dz * sin, point.y - this.root.position.y - this.slewing.position.y, dx * sin + dz * cos).sub(start);
+      const length = leg.length();
+      mesh.position.copy(start);
+      mesh.quaternion.setFromUnitVectors(DOWN, leg.divideScalar(Math.max(1e-6, length)));
+      mesh.scale.set(0.8, Math.max(0.01, length), 0.8);
+    });
   }
 
   /** The slew and trolley that put the hook over a world point. */

@@ -607,7 +607,7 @@ what was decided and why. Section numbers refer to `TIME_TOWER_SPEC.md`.
 2. **The whole job over the block's time (your call, October 6, 2026).** A
    first version played survey to scaffold in a few seconds at the start
    and the roof in a second at the end, with only hammering between. Now
-   the block's time is the job's programme, in shares of its length. As on
+   the block's time is the job's program, in shares of its length. As on
    a real tower the trades overlap, so the building rises the whole time:
    groundworks are short, the scaffold climbs with the frame, and the facade
    closes a few floors behind it. A second version ran the trades one after
@@ -666,7 +666,7 @@ what was decided and why. Section numbers refer to `TIME_TOWER_SPEC.md`.
 5. **The crew and their roles.** The crew size is spec 10.1's. The first
    worker is the foreman, up to three more work on the structure, and on a
    block of 90 minutes or more the rest are a ground crew: a banksman who
-   signals at the stack while the crane picks, and a labourer carrying
+   signals at the stack while the crane picks, and a laborer carrying
    loads to the bay in front of the tower. Under 15 minutes one worker does
    everything. They walk a square road round the tower, never through it.
 6. **A second set of site pieces.** The block under way has its own
@@ -750,11 +750,11 @@ what was decided and why. Section numbers refer to `TIME_TOWER_SPEC.md`.
     a skip by the crane; and a lighting tower with its generator at the
     plot's back corner. Once the plot has been worked it also has a gravel
     ring road round the tower where the crew walks, a gravel haul road from
-    the depot to where the machines work, tyre tracks, a spoil heap, and
+    the depot to where the machines work, tire tracks, a spoil heap, and
     materials laid down along the plot's back and left edges, clear of the
     ring road, the hoist, and the bulldozer's passes: pallets of blocks,
     timber, cement, rebar, pipes, formwork, and a pallet at the bay where the
-    labourer drops loads. A day of plans keeps its grass and has none of
+    laborer drops loads. A day of plans keeps its grass and has none of
     these.
 20. **The whole plot is cleared.** The bulldozer used to clear a strip
     across the plot's middle. Now its front clears the whole
@@ -787,3 +787,84 @@ what was decided and why. Section numbers refer to `TIME_TOWER_SPEC.md`.
     and reduced motion and a new speed along the way, logged no console
     errors. The geometry count settled at 158 after the first demolition and
     held through the afternoon and a day change.
+
+### A bustling site
+
+26. **Always building (your call, October 6, 2026).** The site is a model
+    of the building going up in real time, so something is always under way
+    while the block's time runs. Measured over a 90 minute block on the
+    tower, the crane is moving 85% of the time and rests longest, under two
+    minutes, at the strike; no one on the tower stands still for more than
+    44 seconds, and the banksman signals 82% of the time. On the day's first block of an hour the crane moves 76% of the
+    time, and on a 4 hour block 85%. This takes over from parts of
+    decisions 3 to 6, as below.
+27. **Every piece is its own lift.** Each column, each beam, a bundle of
+    deck sheets for each floor, each facade panel (four to a band), and the
+    roof cap is one crane lift from the yard to where it goes. A lift takes
+    up to 14 seconds at speed 1, not decision 4's nine; on a crowded
+    program it shortens, down to 5, so a floor's nine frame lifts and the
+    crane's swings back fill no more than 60% of the floor's time. Between pieces the crane brings bundles of rebar,
+    formwork, and scaffold where the work is: into the pit, onto the roof
+    below before its floor is started, onto the deck being framed, and onto
+    the scaffold planks, and at the strike it takes the scaffold back down
+    to the yard. Nothing is set on a pit being dug or a floor being poured,
+    so then it stocks a laydown at the front of the site, beside the crew
+    tying rebar, in two spots used in turn. A bundle set down is used 75
+    seconds after it lands, as the crew starts on the floor it sits on, or
+    when the next one is set down in its place.
+28. **Loads hang on slings.** A load hangs from the hook block on sling
+    legs: one strop on a column, two legs on a beam or a panel, four on a
+    bundle or the roof cap. Each kind hangs at its own length, longer for
+    wide loads so the legs stay steep, and the crane carries a load high
+    enough that its foot clears the tower. Columns and panels hang upright,
+    and stand on their rack as the hook takes them.
+29. **A stocked yard.** A stockyard on the depot by the crane holds racks of
+    columns, beams, deck sheets, and facade panels in the block's color,
+    beside a pile of bundles. The racks open the block stocked and run down
+    as the crane picks. Whenever a pick would take a rack below its reserve,
+    a flatbed truck comes in time to top every rack up, and a last load
+    after the final pick leaves the yard as it opened, so blocks back to
+    back match. The truck comes along a street in front of the site, backs
+    up a ramp through the gate, is unloaded by the laborer, and drives off;
+    one truck is on site at a time, about every 20 minutes on a long block.
+
+    | Rack | Opens and ends with | Reserve | Holds at most |
+    |---|---|---|---|
+    | Columns | 8 | 3 | 12 |
+    | Beams | 8 | 3 | 12 |
+    | Deck sheets, in bundles of two | 3 | 1 | 5 |
+    | Facade panels | 6 | 2 | 8 |
+
+    The crew's old pile of beams and panels by the crane now shows only on
+    the speed preview's side plot.
+30. **Up to eight on site, by trade.** Under 15 minutes four work the
+    block, under 30 minutes six, and from 30 minutes eight: the foreman, two
+    connectors who guide in and bolt the frame, two cladders who fit the
+    panels, a banksman, a slinger who hooks each load on at the yard, and a
+    laborer who unloads the trucks and carries to the bay. A crew of six
+    has no laborer or second cladder, and a crew of four no banksman or
+    second connector either. This takes over from decision 5. The block under way
+    keeps a pool of ten workers, not decision 6's six.
+31. **No standing about.** While the machines clear and dig, the crew along
+    the front checks levels, ties rebar cages, and carries formwork boards
+    from a laydown. On the tower they carry planks and load the hoist cage
+    until it goes up, tie the mesh on the roof below, and work the concrete
+    level as the pump pours. On the frame each connector guides a piece in
+    and bolts it with sparks flying, a burst every 0.7 seconds, from small
+    pooled emitters in white and pale blue. At the strike they unclip the
+    scaffold at each level as it comes down. The banksman has a new signal
+    pose, right arm up with the hand circling and left arm out to the load,
+    held from the start of each lift until the crane is back over the yard,
+    and while the mixer is in.
+32. **The speed preview borrows the crane.** Decision 7 meant the preview
+    to borrow the crane and machines, but its job never said so, so the
+    live site kept driving the crane at the side plot. It now borrows what
+    the build it plays borrows. A load on the hook when a job takes the
+    crane goes where the clock puts it rather than hanging in the air.
+33. **Measured.** As in decision 25: mid frame on a 90 minute block the
+    scene draws 614 calls with shadows, up from 519; working out the site
+    each frame takes under 0.1 ms; planning an 8 hour block, 1,090 lifts and
+    22 deliveries, takes 15 to 25 ms once. Days with a first block, a block
+    over free time, and blocks on the tower of 15 minutes, 90 minutes, 4
+    hours, and 8 hours, in reduced motion and through the speed preview,
+    logged no console errors.

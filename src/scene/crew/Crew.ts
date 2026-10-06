@@ -84,6 +84,11 @@ export class Crew {
   readonly dust = new Dust();
   readonly rubble = new Rubble();
   readonly props = new SiteProps();
+  /**
+   * The crew's own pile of beams and panels, for the speed preview. On the
+   * main site the stockyard of the block under way takes its place.
+   */
+  readonly stack = this.createStack();
   private towerTop = 0;
 
   constructor() {
@@ -107,7 +112,7 @@ export class Crew {
       this.dust.root,
       this.rubble.mesh,
       this.props.root,
-      this.createStack(),
+      this.stack,
     );
     this.park();
   }
@@ -117,6 +122,7 @@ export class Crew {
     const stack = new THREE.Group();
     stack.name = 'stack';
     stack.position.set(STACK.x, DEPOT_TOP_Y, STACK.z);
+    stack.visible = false;
     const dark = materials.solid('slateDark');
     for (let layer = 0; layer < 3; layer++) {
       for (let i = 0; i < 3; i++) {

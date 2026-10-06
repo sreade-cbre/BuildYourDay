@@ -892,6 +892,7 @@ export class App {
     side.setPrepared(false);
     scene.root.frameSite(SIDE_SITE, 6);
     scene.crew.root.position.copy(SIDE_SITE);
+    scene.crew.stack.visible = true;
     scene.crew.setTowerTop(3);
     scene.crew.park();
     scene.crew.settleMast();
@@ -914,6 +915,7 @@ export class App {
     const job = previewJob(jobs, block, `Previewing ${settings.animationSpeed}x speed`, () => {
       document.removeEventListener('keydown', onKey, true);
       scene.crew.root.position.set(0, 0, 0);
+      scene.crew.stack.visible = false;
       side.setPrepared(false);
       side.root.visible = false;
       scene.root.restoreView(view);

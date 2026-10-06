@@ -61,16 +61,22 @@ and deleting a block leaves free time behind.
   stakes, a bulldozer clears the plot, the excavator digs while a dump truck
   hauls the spoil, and the footings, rebar, and slab go in. A block on the
   tower gets a hoist, a guard rail on the roof below, and a floor pumped up
-  and poured. Then the frame goes up floor by floor, the crane bringing each
-  floor's beams, with the crew bolting and climbing deck to deck and the
-  scaffold rising with them. A few floors behind, the crane brings the
-  facade panels band by band as the facade closes, so the block fills in
-  steadily through its time. The roof cap goes on, and the scaffold comes
-  down with the crew, who head home as the time runs out. The block's label
-  names the trade at work, such as framing or cladding. Open the app at any moment and
-  the site is where that moment puts it. Around it all is a fenced site with
+  and poured. Then the frame goes up floor by floor, with the crew bolting
+  each piece in a shower of sparks and climbing deck to deck as the
+  scaffold rises with them. A few floors behind, the facade closes band by
+  band, so the block fills in steadily through its time. The roof cap goes
+  on, and the scaffold comes down with the crew, who head home as the time
+  runs out. The site is busy the whole time: the crane lifts every column,
+  beam, deck bundle, and facade panel on slings from a stockyard by its
+  base, and bundles of rebar, formwork, and scaffold between them; a
+  slinger hooks each load on and a banksman signals it up; the racks run
+  down and a flatbed truck backs in to restock them; and the mixer comes
+  back to pour each floor. Up to eight work the block, each at their
+  trade. The block's label names the trade at work, such as framing or
+  cladding. Open the app at any moment and the site is where that moment
+  puts it. Around it all is a fenced site with
   an entrance, cabins, toilets, a skip, and a lighting tower; once the plot
-  is cleared, gravel roads, tyre tracks, and materials laid down at its
+  is cleared, gravel roads, tire tracks, and materials laid down at its
   edges.
 - **Edits animate too.** On finished blocks, a resize extends or shrinks the
   block, a move slides it or has the crane carry it, and Demolish brings in

@@ -5,7 +5,7 @@ import { easeInOutCubic, easeOutCubic } from '../../anim/easing';
 // limb forward, positive back. A pose is flat numbers so two poses blend by
 // interpolating field by field.
 
-export type WorkerAnim = 'idle' | 'walk' | 'hammer' | 'screed' | 'survey' | 'carry' | 'ride';
+export type WorkerAnim = 'idle' | 'walk' | 'hammer' | 'screed' | 'survey' | 'carry' | 'ride' | 'signal';
 
 export interface Pose {
   bob: number;
@@ -35,6 +35,7 @@ export const CYCLE: Record<WorkerAnim, number> = {
   carry: 0.5,
   // A still pose; the cycle only paces the blend.
   ride: 1.0,
+  signal: 1.2,
 };
 
 const deg = (d: number) => (d * Math.PI) / 180;
@@ -140,7 +141,25 @@ function ride(): Pose {
   return { ...REST, shoulderL: deg(-25), shoulderOutL: deg(35), elbowL: deg(-35), elbowR: deg(-12) };
 }
 
-const POSES: Record<WorkerAnim, (p: number) => Pose> = { idle, walk, hammer, screed, survey, carry, ride };
+/**
+ * The banksman guiding the crane: right arm up with the hand circling to
+ * signal the hoist, left arm out toward the load, head tipped up to the hook.
+ */
+function signal(p: number): Pose {
+  const s = Math.sin(TAU * p);
+  const c = Math.cos(TAU * p);
+  return {
+    ...REST,
+    neck: deg(-14),
+    shoulderR: deg(-160) + deg(8) * s,
+    elbowR: deg(-30) + deg(22) * c,
+    shoulderL: deg(-20),
+    shoulderOutL: deg(75) + deg(8) * s,
+    elbowL: deg(-10),
+  };
+}
+
+const POSES: Record<WorkerAnim, (p: number) => Pose> = { idle, walk, hammer, screed, survey, carry, ride, signal };
 
 /** The pose for an animation at a phase; any phase wraps into [0, 1). */
 export function poseFor(anim: WorkerAnim, phase: number): Pose {

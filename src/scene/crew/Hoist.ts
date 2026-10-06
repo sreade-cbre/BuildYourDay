@@ -50,9 +50,9 @@ export class Hoist {
     this.cage.position.y = Math.max(this.mastBase, y);
   }
 
-  /** Where a rider stands: slot 0 to 2 across the cage floor. */
+  /** Where a rider stands: slot 0 to 3 across the cage floor. */
   riderSpot(slot: number): { x: number; z: number } {
-    const offsets = [[-0.13, 0.1], [0.13, -0.08], [0.1, 0.14]] as const;
+    const offsets = [[-0.13, 0.1], [0.13, -0.08], [0.1, 0.14], [-0.12, -0.14]] as const;
     const [dx, dz] = offsets[slot % offsets.length]!;
     return { x: this.x + dx, z: this.cageZ + dz };
   }

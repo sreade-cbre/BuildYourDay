@@ -9,7 +9,7 @@ import { materials } from './materials';
 // there: a mesh fence round the plot and depot with an entrance gate and
 // signs, stacked site cabins with a stair, toilets, a skip, a lighting tower
 // with its generator, and cones at the gate. Once the plot has been worked,
-// it also has a gravel haul road and ring road with tyre tracks, a spoil
+// it also has a gravel haul road and ring road with tire tracks, a spoil
 // heap, and materials laid down out of the crew's way: pallets of blocks,
 // timber, cement, rebar, pipes, and formwork. Everything is built once from
 // a few shared shapes, then merged into one mesh per material so the whole
@@ -22,6 +22,9 @@ const PANEL_LENGTH = 1.15;
 const PANEL_HEIGHT = 0.62;
 /** Where the site entrance opens in the fence along the depot's front. */
 const GATE = { from: 6.0, to: 8.4, z: 4.35 };
+/** The street in front of the site, and the ramp from it up to the depot. */
+export const ROAD_Z = 6.6;
+export const RAMP = { start: 4.0, end: 5.2 };
 
 const unitBox = new THREE.BoxGeometry(1, 1, 1);
 const unitCylinder = new THREE.CylinderGeometry(0.5, 0.5, 1, 12);
@@ -147,7 +150,7 @@ export class SiteYard {
   constructor() {
     this.root.name = 'site-yard';
     this.worked.name = 'worked-plot';
-    this.root.add(...[this.createFence(), this.createCabins(), this.createWelfare(), this.createLighting(), this.createGate()].map(bake), this.worked);
+    this.root.add(...[this.createFence(), this.createCabins(), this.createWelfare(), this.createLighting(), this.createGate(), this.createRoad()].map(bake), this.worked);
     this.worked.add(this.createRoads(), bake(this.createLaydown()));
     this.setWorked(false);
   }
@@ -257,13 +260,26 @@ export class SiteYard {
     // Cones mark the way in.
     const cones: Placed[] = [];
     const bands: Placed[] = [];
-    for (const [x, z] of [[GATE.from - 0.2, 4.85], [GATE.from + 0.5, 5.25], [GATE.to - 0.5, 5.25], [GATE.to + 0.2, 4.85]] as const) {
+    for (const [x, z] of [[GATE.from - 0.25, 4.85], [GATE.from - 0.3, 5.4], [GATE.to + 0.3, 5.4], [GATE.to + 0.25, 4.85]] as const) {
       cones.push({ x, y: GROUND_Y + 0.13, z, sx: 0.14, sy: 0.26, sz: 0.14 });
       bands.push({ x, y: GROUND_Y + 0.15, z, sx: 0.07, sy: 0.04, sz: 0.07 });
       bands.push({ x, y: GROUND_Y + 0.01, z, sx: 0.2, sy: 0.02, sz: 0.2 });
     }
     gate.add(instanced(unitCone, materials.hazard(), cones), instanced(unitCylinder, materials.solid('white'), bands));
     return gate;
+  }
+
+  /** The street in front of the site, and the ramp from it up through the gate to the depot. */
+  private createRoad(): THREE.Group {
+    const group = new THREE.Group();
+    group.name = 'road';
+    group.add(block(materials.solid('slateLight', 1), 3, GROUND_Y, ROAD_Z, 30, 0.004, 1.4));
+    for (let x = -11; x <= 17; x += 1.6) group.add(block(materials.solid('white'), x, GROUND_Y + 0.004, ROAD_Z, 0.7, 0.003, 0.06));
+    // The ramp: a slope from the road up to the depot's front edge.
+    const rise = DEPOT_Y - GROUND_Y;
+    const run = RAMP.end - RAMP.start;
+    group.add(mesh(unitBox, materials.solid('slate'), { x: (GATE.from + GATE.to) / 2, y: GROUND_Y + rise / 2, z: (RAMP.start + RAMP.end) / 2, sx: GATE.to - GATE.from - 0.2, sy: 0.03, sz: Math.hypot(run, rise), rx: Math.atan2(rise, run) }));
+    return group;
   }
 
   /** Two site cabins stacked at the back of the depot, the upper one reached by a stair. */

@@ -15,6 +15,8 @@ export function previewJob(scene: JobScene, block: Block, label: string, done: (
   const build = buildJob(scene, block);
   return {
     label,
+    // The live site keeps off the crane and machines while they show the preview.
+    borrows: build.borrows,
     start: () => {
       const tl = build.start();
       const end = tl.duration;

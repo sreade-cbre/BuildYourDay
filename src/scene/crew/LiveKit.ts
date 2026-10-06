@@ -5,6 +5,8 @@ import { GuardRail } from './GuardRail';
 import { Hoist } from './Hoist';
 import { SiteProps } from './props';
 import { Scaffold } from './Scaffold';
+import { Sparks } from './Sparks';
+import { FlatbedTruck, Stockyard } from './Stockyard';
 import { Worker } from './Worker';
 
 // The pieces of one construction site: its workers, scaffold, guard rail,
@@ -23,8 +25,8 @@ export interface SiteKit {
   park(): void;
 }
 
-/** The most workers a build uses (spec 10.1). */
-const LIVE_WORKERS = 6;
+/** The most workers the block under way puts on site. */
+const LIVE_WORKERS = 10;
 
 export class LiveKit implements SiteKit {
   readonly root = new THREE.Group();
@@ -34,6 +36,12 @@ export class LiveKit implements SiteKit {
   readonly hoist = new Hoist(HOIST.x, HOIST.mastZ, HOIST.cageZ);
   readonly props = new SiteProps();
   readonly dust = new Dust();
+  /** Welding sparks where the crew fixes pieces. */
+  readonly sparks = new Sparks();
+  /** The materials waiting on the depot, which the crane lifts from. */
+  readonly stockyard = new Stockyard();
+  /** The truck that restocks the yard. */
+  readonly flatbed = new FlatbedTruck();
 
   constructor() {
     this.root.name = 'live-site';
@@ -42,7 +50,7 @@ export class LiveKit implements SiteKit {
       this.workers.push(worker);
       this.root.add(worker.root);
     }
-    this.root.add(this.scaffold.root, this.rail.root, this.hoist.root, this.props.root, this.dust.root);
+    this.root.add(this.scaffold.root, this.rail.root, this.hoist.root, this.props.root, this.dust.root, this.sparks.root, this.stockyard.root, this.flatbed.root);
     this.park();
   }
 
@@ -54,11 +62,15 @@ export class LiveKit implements SiteKit {
     this.hoist.hide();
     this.props.reset();
     this.dust.clear();
+    this.sparks.clear();
+    this.flatbed.hide();
+    this.stockyard.fill();
   }
 
-  /** Per frame: worker poses and dust. Returns true while dust is in the air. */
+  /** Per frame: worker poses, dust, and sparks. Returns true while any are in the air. */
   update(dt: number): boolean {
     for (const worker of this.workers) worker.update(dt);
-    return this.dust.update(dt);
+    const dusty = this.dust.update(dt);
+    return this.sparks.update(dt) || dusty;
   }
 }
