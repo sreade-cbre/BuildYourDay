@@ -43,8 +43,8 @@ export class Label {
       fog: false,
     });
     this.sprite = new THREE.Sprite(this.material);
-    // Anchor at the left middle so the card extends away from the tower.
-    this.sprite.center.set(0, 0.5);
+    // Anchor at the right middle so the card extends away from the tower, which it stands to the left of.
+    this.sprite.center.set(1, 0.5);
     this.sprite.renderOrder = 10;
   }
 

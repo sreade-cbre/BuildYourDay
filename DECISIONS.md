@@ -1004,6 +1004,21 @@ what was decided and why. Section numbers refer to `TIME_TOWER_SPEC.md`.
     nothing lies on the ground to fight it. Checked low along the street,
     at a grazing angle, zoomed out, and in both themes: straight and solid
     every time. The ramp up to the gate is still its own slope.
+46. **Labels on the left (your request, October 6, 2026: "make the tags on
+    the left side so they dont block the crane").** Spec 8.5 puts each
+    block's label on the right, where the tower crane stands at the default
+    view, so the labels hid its mast and the loads going up. They now stand
+    on the camera's left, mirrored in every other way: the same columns,
+    leader lines, and room, which the centered framing makes the same on
+    both sides. The hoist climbs the tower's left side, so the labels start
+    1.1 units out from the tower rather than 0.4, and the now card 0.55 out
+    from its ring rather than 0.25, both clear of the hoist's mast and cage.
+    The now card stays on the left, where it does not cover the crane at
+    the height it works; a label at the card's height steps out past it,
+    on a leader line, and labels further out already clear it. Checked at
+    the default view at 9:30 and 11:20, and on a day of 44 quarter hour
+    blocks, the most the window holds: 45 cards, none overlapping, all on
+    screen.
 40. **Never beneath the ground (your call, October 6, 2026).** The first
     free view let the camera tilt under the ground and look up at the
     underside of the plot. The camera now stays at least 0.3 units above

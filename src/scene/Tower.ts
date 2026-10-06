@@ -20,6 +20,7 @@ import { GapMesh } from './GapMesh';
 import type { Ground } from './Ground';
 import type { BlockPose, Holds } from './holds';
 import { Label, type LabelText } from './Label';
+import { NOW_CARD_REACH, type NowTag } from './NowRing';
 import { DIMMED_OPACITY, colorOf, darkVariant, materials, weatheredColor } from './materials';
 import type { LabelSpace } from './SceneRoot';
 
@@ -34,8 +35,12 @@ import type { LabelSpace } from './SceneRoot';
 // through plan, the block under way is built up to the now ring with its plan
 // above, and a block whose time is up stands finished.
 
-/** Gap between a block's right face and its label (spec section 8.5). */
-const LABEL_OFFSET = 0.4;
+/**
+ * Gap between a block's left face and its label. Spec 8.5 puts the labels on
+ * the right, 0.4 out, where they hid the tower crane; on the left they stand
+ * clear of the hoist that climbs that side as well.
+ */
+const LABEL_OFFSET = 1.1;
 /** Extra reach, with a leader line, for blocks shorter than SHORT_BLOCK. */
 const LEADER_STEP = 0.25;
 const SHORT_BLOCK = 0.6;
@@ -43,6 +48,12 @@ const SHORT_BLOCK = 0.6;
 const LABEL_GAP = 0.12;
 /** Horizontal gap between staggered label columns. */
 const COLUMN_GAP = 0.3;
+/**
+ * How much further out than its column a label at the now card's height
+ * starts, on top of the card's width, so it clears the card from any angle:
+ * the card's inner edge less the nearest the tower's face comes, and a gap.
+ */
+const NOW_CLEARANCE = NOW_CARD_REACH - BLOCK_FOOTPRINT / 2 - LABEL_OFFSET + COLUMN_GAP;
 /** Dense days may shrink labels to this share of their normal size to fit. */
 const MIN_LABEL_FACTOR = 0.8;
 const MAX_LEADERS = 48;
@@ -87,13 +98,13 @@ interface BlockView {
   /** Where the block stands when no job has claimed it. */
   home: BlockPose;
   dimmed: boolean;
-  /** Distance from the block's right face to the label's left edge. */
+  /** Distance from the block's left face to the label's near edge. */
   labelOffset: number;
   leader: boolean;
 }
 
 interface LabelPlan {
-  /** Distance from the tower's right face to the far edge of the last column. */
+  /** Distance from the tower's left face to the far edge of the last column. */
   width: number;
   slots: Array<{ view: BlockView; offset: number; leader: boolean }>;
 }
@@ -164,7 +175,10 @@ export class Tower {
   private readonly outline: THREE.LineSegments;
   private readonly ghost: THREE.Mesh;
   private readonly landing: THREE.LineSegments;
-  private readonly right = new THREE.Vector3(1, 0, 0);
+  /** The camera's left, along the ground: the side the labels stand on. */
+  private readonly left = new THREE.Vector3(-1, 0, 0);
+  /** The now ring's card, which the labels step out past. */
+  private nowTag: NowTag | null = null;
   private labelSpace: LabelSpace = { unitsPerPixel: 0.04, budget: Infinity };
   private labelMode: LabelMode = 'always';
   private decor: TowerDecor = NO_DECOR;
@@ -673,6 +687,18 @@ export class Tower {
 
   // Labels
 
+  /** Where the now ring's card stands, so the labels keep clear of it. Null while there is none. */
+  setNowTag(tag: NowTag | null): void {
+    const current = this.nowTag;
+    const same = tag === null || current === null
+      ? tag === current
+      : Math.abs(tag.y - current.y) < 1e-6 && tag.widthPx === current.widthPx && tag.heightPx === current.heightPx;
+    if (same) return;
+    this.nowTag = tag;
+    this.layoutLabels();
+    this.onChange?.();
+  }
+
   /** Label scale and room beside the tower, from the camera framing. */
   setLabelSpace(space: LabelSpace): void {
     const current = this.labelSpace;
@@ -708,7 +734,8 @@ export class Tower {
   /**
    * Assigns labels to columns at a given scale. Taller blocks claim the inner
    * column first; when two labels would overlap, the shorter block's label
-   * steps one column further out. Short blocks get a leader line.
+   * steps one column further out. An inner label at the now card's height
+   * steps out past the card. Short and stepped out labels get a leader line.
    */
   private planLabels(scale: number): LabelPlan {
     const items = [...this.views.values()]
@@ -723,9 +750,18 @@ export class Tower {
           labelWidth: view.label.widthPx * scale,
           short: height < SHORT_BLOCK,
           column: 0,
+          // How much further out than its column the label starts.
+          step: 0,
         };
       });
     items.sort((a, b) => b.height - a.height || a.view.block.start - b.view.block.start);
+
+    // The now card is sized like the labels at their full scale.
+    const tag = this.nowTag;
+    const unit = this.labelSpace.unitsPerPixel;
+    const tagLow = tag ? tag.y - (tag.heightPx * unit) / 2 - LABEL_GAP / 2 : 0;
+    const tagHigh = tag ? tag.y + (tag.heightPx * unit) / 2 + LABEL_GAP / 2 : 0;
+    const tagStep = tag ? tag.widthPx * unit + NOW_CLEARANCE : 0;
 
     const columns: Array<Array<[number, number]>> = [];
     const widths: number[] = [];
@@ -735,7 +771,9 @@ export class Tower {
       let column = 0;
       while (columns[column]?.some(([a, b]) => a < high && low < b)) column++;
       (columns[column] ??= []).push([low, high]);
-      widths[column] = Math.max(widths[column] ?? 0, item.labelWidth + (item.short ? LEADER_STEP : 0));
+      // Outer columns already start past the card.
+      item.step = (item.short ? LEADER_STEP : 0) + (tag && column === 0 && low < tagHigh && tagLow < high ? tagStep : 0);
+      widths[column] = Math.max(widths[column] ?? 0, item.labelWidth + item.step);
       item.column = column;
     }
 
@@ -748,25 +786,25 @@ export class Tower {
       width,
       slots: items.map((item) => ({
         view: item.view,
-        offset: LABEL_OFFSET + columnStart[item.column]! + (item.short ? LEADER_STEP : 0),
-        leader: item.short || item.column > 0,
+        offset: LABEL_OFFSET + columnStart[item.column]! + item.step,
+        leader: item.step > 0 || item.column > 0,
       })),
     };
   }
 
   /**
-   * Places labels to the right of the tower as seen from the camera. Runs
+   * Places labels to the left of the tower as seen from the camera. Runs
    * before each render so labels follow an orbiting camera.
    */
   updateForCamera(camera: THREE.Camera): void {
     this.applyClaims();
     this.syncOutline();
-    this.right.setFromMatrixColumn(camera.matrixWorld, 0);
-    this.right.y = 0;
-    if (this.right.lengthSq() < 1e-8) this.right.set(1, 0, 0);
-    this.right.normalize();
-    // How far the square footprint reaches along the camera's right axis.
-    const face = ((Math.abs(this.right.x) + Math.abs(this.right.z)) * BLOCK_FOOTPRINT) / 2;
+    this.left.setFromMatrixColumn(camera.matrixWorld, 0).negate();
+    this.left.y = 0;
+    if (this.left.lengthSq() < 1e-8) this.left.set(-1, 0, 0);
+    this.left.normalize();
+    // How far the square footprint reaches along the camera's left axis.
+    const face = ((Math.abs(this.left.x) + Math.abs(this.left.z)) * BLOCK_FOOTPRINT) / 2;
 
     const positions = this.leaderGeometry.getAttribute('position') as THREE.BufferAttribute;
     let leaders = 0;
@@ -774,10 +812,10 @@ export class Tower {
       if (!view.label.sprite.visible) continue;
       const mid = view.mesh.baseY + view.mesh.height / 2;
       const reach = face + view.labelOffset;
-      view.label.sprite.position.set(this.right.x * reach, mid, this.right.z * reach);
+      view.label.sprite.position.set(this.left.x * reach, mid, this.left.z * reach);
       if (view.leader && leaders < MAX_LEADERS) {
-        positions.setXYZ(leaders * 2, this.right.x * face, mid, this.right.z * face);
-        positions.setXYZ(leaders * 2 + 1, this.right.x * reach, mid, this.right.z * reach);
+        positions.setXYZ(leaders * 2, this.left.x * face, mid, this.left.z * face);
+        positions.setXYZ(leaders * 2 + 1, this.left.x * reach, mid, this.left.z * reach);
         leaders++;
       }
     }

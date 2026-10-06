@@ -273,6 +273,7 @@ export class App {
       scene.nowRing.hide();
     }
     scene.tower.setNowY(scene.nowRing.y);
+    scene.tower.setNowTag(scene.nowRing.tag);
     scene.tower.setClock(clock, animate);
     scene.live.sync();
     this.scheduleBoundary();

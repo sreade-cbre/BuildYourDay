@@ -34,14 +34,14 @@ const FRAME_TWEEN_SECONDS = 0.8;
 const LIGHT_DIRECTION = new THREE.Vector3(12, 30, 18).normalize();
 /** Label canvas pixels shown at this many screen pixels at the default view. */
 const LABEL_SCREEN_SCALE = 0.75;
-/** Share of the half screen width kept clear at the right edge, past the labels. */
+/** Share of the half screen width kept clear at the left edge, past the labels. */
 const LABEL_EDGE_MARGIN = 0.04;
 
 /** Room for labels at the default view, in world units. */
 export interface LabelSpace {
   /** World units per label canvas pixel. */
   unitsPerPixel: number;
-  /** Width from the tower's right face to the screen edge. */
+  /** Width from the tower's left face to the screen edge. */
   budget: number;
 }
 
@@ -479,7 +479,8 @@ export class SceneRoot {
 
   /**
    * Label sizing for the default view: a scale that keeps label text at a
-   * steady screen size, and the room to the right of the tower.
+   * steady screen size, and the room to the left of the tower. The framing
+   * is centered, so it is the same as the room to the right.
    */
   get labelSpace(): LabelSpace {
     const visibleHeight = 2 * this.defaultDistance * Math.tan(THREE.MathUtils.degToRad(CAMERA_FOV / 2));

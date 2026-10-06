@@ -7,8 +7,9 @@ import { materials } from './materials';
 
 // The now ring (spec 8.6): a thin blue ring around the tower at the current
 // time's height, with a small "now 10:40" card beside it. The card sits on the
-// camera's left, away from the block labels on the right. The ring tweens to
-// a new height over 0.6 s, or jumps there under reduced motion.
+// camera's left, as the block labels do, and any label at its height steps
+// out past it (Tower). The ring tweens to a new height over 0.6 s, or jumps
+// there under reduced motion.
 
 const RING_RADIUS = BLOCK_FOOTPRINT * 0.78;
 const TUBE = 0.05;
@@ -17,8 +18,17 @@ const CARD_PX = 15;
 const PAD_X = 8;
 const PAD_Y = 5;
 const PIXEL_RATIO = 2;
-/** Gap between the ring and the card, in world units. */
-const CARD_GAP = 0.25;
+/** Gap between the ring and the card, in world units: enough to clear the hoist. */
+const CARD_GAP = 0.55;
+/** How far out from the tower's middle the card's inner edge stands. */
+export const NOW_CARD_REACH = RING_RADIUS + TUBE + CARD_GAP;
+
+/** Where the card stands, and its size in canvas pixels. */
+export interface NowTag {
+  y: number;
+  widthPx: number;
+  heightPx: number;
+}
 
 const ringGeometry = new THREE.TorusGeometry(RING_RADIUS, TUBE, 10, 112);
 
@@ -59,6 +69,11 @@ export class NowRing {
   /** World height the ring stands at, or is heading to. */
   get targetY(): number {
     return this.to;
+  }
+
+  /** The card the labels keep clear of, at the height the ring is heading to; null while hidden. */
+  get tag(): NowTag | null {
+    return this.root.visible ? { y: this.to, widthPx: this.widthPx, heightPx: this.heightPx } : null;
   }
 
   /** World height the ring stands at right now, mid tween included. */
@@ -114,8 +129,7 @@ export class NowRing {
     this.right.y = 0;
     if (this.right.lengthSq() < 1e-8) this.right.set(1, 0, 0);
     this.right.normalize();
-    const reach = RING_RADIUS + TUBE + CARD_GAP;
-    this.card.position.set(-this.right.x * reach, 0, -this.right.z * reach);
+    this.card.position.set(-this.right.x * NOW_CARD_REACH, 0, -this.right.z * NOW_CARD_REACH);
   }
 
   private setText(text: string): void {
