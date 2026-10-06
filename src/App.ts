@@ -11,7 +11,7 @@ import { vanishJob } from './anim/jobs/vanish';
 import { LiveSite } from './anim/live';
 import { planJobs, type JobPlan } from './anim/plan';
 import { LIMITS, sampleBlocks } from './core/defaults';
-import { UNITS_PER_MINUTE, defaultNewRange, gapDraftRange, isInWindow, minutesToY, resizeLimits, totals, towerHeight } from './core/layout';
+import { UNITS_PER_MINUTE, defaultNewRange, gapDraftRange, minutesToY, resizeLimits, totals, towerHeight } from './core/layout';
 import type { Block, BlockId, CategoryId, Settings, TimeRange } from './core/model';
 import {
   PERSIST_MESSAGES,
@@ -22,7 +22,7 @@ import {
   serializeExport,
   type StorageLike,
 } from './core/persist';
-import { crossings, nextChange, type Clock } from './core/progress';
+import { nextChange, type Clock } from './core/progress';
 import { MESSAGES, Store, type BlockPatch, type StoreEvent } from './core/store';
 import { addDays, ceilToSlot, clamp, floorToSlot, formatDateTitle, formatDurationLong, formatTimeShort, nowMinutes, todayIso } from './core/time';
 import { Crew } from './scene/crew/Crew';
@@ -74,17 +74,11 @@ interface SceneParts {
 
 const GAP_TOO_SHORT = 'That gap is shorter than one slot, so pick a longer gap.';
 /**
- * How often the now ring, weathering, the block under way, and the date
- * catch up with the clock (spec 8.6). A block's start and end also wake the
- * app exactly on time.
+ * How often the now ring, weathering, and the date catch up with the clock
+ * (spec 8.6). A block's start and end also wake the app exactly on time, and
+ * the site of the block under way follows the clock every frame.
  */
 const CLOCK_MS = 30_000;
-/**
- * A start or end the clock passed within this many minutes of the last
- * reading was watched, so the crew plays it; after a longer gap, such as a
- * tab left hidden, the day shows as it now stands.
- */
-const WATCHED_MINUTES = 2;
 /** Quiet time before the camera starts its idle orbit (spec 8.7). */
 const IDLE_ORBIT_MS = 20_000;
 const IDLE_ORBIT_SPEED = 0.4;
@@ -115,8 +109,6 @@ export class App {
   private ringRunning = false;
   /** The date the app last saw as today, to notice midnight. */
   private today = todayIso();
-  /** The clock as last read, to notice blocks starting and ending. */
-  private lastClock: Clock | null = null;
   private boundaryTimer = 0;
   private lastInput = performance.now();
   private sideGround: Ground | null = null;
@@ -247,10 +239,9 @@ export class App {
   /**
    * Places the now ring, shown only on today and inside the day window (spec
    * 8.6), and tells the tower the time, which decides what is planned, under
-   * way, and done, and what is weathered (spec 11.4). When the clock has just
-   * passed a block's end or start, the crew finishes or starts it. `animate`
-   * tweens the ring, lets newly done blocks fade, and plays those crossings;
-   * after a day change or a load everything lands at once.
+   * way, and done, and what is weathered (spec 11.4). `animate` tweens the
+   * ring and lets newly done blocks fade; after a day change or a load
+   * everything lands at once.
    */
   private updateNow(animate: boolean): void {
     const scene = this.scene;
@@ -266,11 +257,6 @@ export class App {
       scene.nowRing.hide();
     }
     scene.tower.setNowY(scene.nowRing.y);
-    const last = this.lastClock;
-    this.lastClock = clock;
-    const watched = animate && viewingToday && last !== null && last.today === clock.today && minutes - last.minutes <= WATCHED_MINUTES;
-    // Jobs claim their blocks before the tower shows the new time.
-    if (watched) this.playCrossings(last.minutes, minutes);
     scene.tower.setClock(clock, animate);
     scene.live.sync();
     this.scheduleBoundary();
@@ -284,31 +270,6 @@ export class App {
       });
     }
     scene.root.requestRender();
-  }
-
-  /**
-   * The clock passed a block's end or start while the day was on screen: the
-   * crew finishes the one and starts the other, in turn.
-   */
-  private playCrossings(from: number, to: number): void {
-    const scene = this.scene;
-    if (!scene || this.reducedMotion()) return;
-    const settings = this.store.settings;
-    const blocks = this.store.blocks.filter((b) => isInWindow(b, settings));
-    const { finished, started } = crossings(blocks, from, to);
-    if (finished.length === 0 && started.length === 0) return;
-    const chain = {};
-    for (const block of finished) {
-      const job = scene.live.finishJob(block);
-      job.chain = chain;
-      scene.director.enqueue(job);
-    }
-    for (const block of started) {
-      const job = scene.live.startJob(block);
-      job.chain = chain;
-      scene.director.enqueue(job);
-    }
-    this.runDirector();
   }
 
   /** Wakes the app exactly when the next block on today starts or ends. */
@@ -394,10 +355,14 @@ export class App {
       requestRender: () => root.requestRender(),
     };
     const live = new LiveSite(jobs, liveKit, {
-      enabled: () => !this.reducedMotion(),
-      nowY: () => tower!.nowHeight,
+      calm: () => this.reducedMotion(),
       speed: () => this.store.settings.animationSpeed,
       animate: (frame) => root.addSlowAnimator(frame),
+      borrowed: () => {
+        const borrows = director.current?.borrows ?? [];
+        return { crane: borrows.includes('crane'), machines: borrows.includes('machines') };
+      },
+      minutes: () => nowMinutes(),
     });
     // Jobs are planned before the Tower hears of a change, so a new block is
     // already held when the Tower first draws it.
@@ -453,35 +418,29 @@ export class App {
 
   /**
    * Turns store changes into jobs (spec 9.2 and 9.6); see plan.ts. Under
-   * reduced motion each job plays its short version (spec 9.7), and no crew
-   * works on the block under way.
+   * reduced motion each job plays its short version (spec 9.7).
    */
   private planJobs(event: StoreEvent, director: Director, jobs: JobScene, live: LiveSite): void {
     const tower = jobs.tower;
     const plan = planJobs(event, this.store.viewedDate, this.ui.state.selectedId, {
       stateOf: (range) => tower.stateOf(range),
-      minutes: tower.clockMinutes,
+      builtTo: (block) => live.builtTo(block),
     });
     if (plan.finish) director.finishAll();
     const calm = this.reducedMotion();
     for (const job of plan.jobs) {
-      const made = this.makeJob(job, jobs, live, calm);
-      if (made) director.enqueue(made);
+      director.enqueue(this.makeJob(job, jobs, calm));
     }
     if (director.isBusy) this.runDirector();
   }
 
-  private makeJob(plan: JobPlan, scene: JobScene, live: LiveSite, calm: boolean): Job | null {
+  private makeJob(plan: JobPlan, scene: JobScene, calm: boolean): Job {
     switch (plan.kind) {
       case 'appear': {
         const job = fadeInJob(scene, plan.block);
         job.speed = plan.speed;
         return job;
       }
-      case 'start':
-        return calm ? null : live.startJob(plan.block);
-      case 'finish':
-        return calm ? null : live.finishJob(plan.block);
       case 'demolish':
         return demolishJob(scene, plan.block, calm);
       case 'vanish':

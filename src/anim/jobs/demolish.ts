@@ -69,6 +69,7 @@ export function demolishJob(scene: JobScene, block: Block, calm: boolean): Job {
   const site = scene.blocks().every((b) => scene.stateOf(b) === 'planned') ? holds.claimSite('freeze') : null;
   return {
     label: `Demolishing ${titleOf(block)}`,
+    borrows: ['crane', 'machines'],
     start: () => {
       crew.park();
       return calm ? fadeOut(scene, proxy, pose, token) : demolishTimeline(scene, block, pose, proxy, site);

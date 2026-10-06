@@ -54,20 +54,23 @@ and deleting a block leaves free time behind.
 
 - **Add a block** with Add block, the N key, a click on a gap (it prefills
   that free time, up to two hours), or a click on the plot or the top roof.
-- **Watch it build, in real time.** A block is built while its time runs.
-  Until then it is a see through plan in its category color. When its time
-  starts, the crew arrives: survey, site prep, foundation, frame, and
-  scaffold, a few seconds in all. Then the facade rises with the now ring
-  while the crew hammers on the scaffold at that height, climbing as it goes.
-  When the time is up, the roof goes on, the scaffold comes down, and the crew
-  goes home. The first block of a day clears and pours the site; later ones
-  get a guard rail and a hoist ride up instead. A block added when its time
-  is already up appears finished; one added partway through gets its crew,
-  who catch up with the time already gone.
+- **Watch it build, in real time.** A block is built over the whole of its
+  time, the way a site would build it. Until its time starts it is a see
+  through plan in its category color. The day's first block starts from
+  grass: the foreman sets out the footprint and a worker drives the corner
+  stakes, a bulldozer clears the plot, the excavator digs while a dump truck
+  hauls the spoil, and the footings, rebar, and slab go in. A block on the
+  tower gets a hoist, a guard rail on the roof below, and a floor pumped up
+  and poured. Then the frame goes up floor by floor, the crane bringing each
+  floor's beams, with the crew bolting and climbing deck to deck. The
+  scaffold goes up, the crane brings the facade panels band by band as the
+  facade closes, the roof cap goes on, and the scaffold comes down with the
+  crew, who head home as the time runs out. Open the app at any moment and
+  the site is where that moment puts it.
 - **Edits animate too.** On finished blocks, a resize extends or shrinks the
   block, a move slides it or has the crane carry it, and Demolish brings in
-  the wrecking ball, which takes down only the built part of the block under
-  way. Plans slide and fade, with no crew. Adding more while one plays hurries
+  the wrecking ball, which takes down only the facade that has closed on the
+  block under way. Plans slide and fade, with no crew. Adding more while one plays hurries
   it along. Skip in the status chip or Escape finishes everything at once, as
   do opening settings and changing days. With reduced motion there is no
   crew: each change is a quarter second fade or slide, and the block under
@@ -146,7 +149,7 @@ and Cancel puts everything back.
 | Slot | 5, 10, 15, or 30 minutes. New edits snap to it. |
 | Time format | 12h or 24h. |
 | Categories | Up to 9, each with a name and one of nine brand colors. Removing one moves its blocks to the first category. |
-| Animation speed | 0.5x to 3x for every construction animation, such as a block's start and finish and the crew's work in between. The building itself always follows the clock. Preview builds a one hour block from start to finish on a plot beside the tower at the chosen speed, then clears it; Escape skips it. An undone deletion of a finished block always fades back in at 3x. |
+| Animation speed | 0.5x to 3x for every construction animation: the crew's walking, the machines, the crane's lifts, and every edit. The building itself always follows the clock. Preview builds a one hour block from start to finish on a plot beside the tower at the chosen speed, then clears it; Escape skips it. An undone deletion of a finished block always fades back in at 3x. |
 | Reduced motion | System, On, or Off. On turns every construction animation into a quarter second fade or slide with no crew, stops the idle orbit, and moves the now ring without gliding. |
 | Idle orbit | Slowly circles the tower after 20 seconds without input. |
 | Labels | Always, or only on hover. |
@@ -164,7 +167,7 @@ src/
   scene/            three.js scene: SceneRoot, Ground, Tower, blocks, gaps, labels, now ring
   scene/crew/       workers, machines, crane, hoist, scaffold, rubble, dust, and site props
   ui/               HTML overlay
-  anim/             Timeline, Director, easing, paths, the job planner (plan.ts), and the block under way (live.ts)
+  anim/             Timeline, Director, easing, paths, the job planner (plan.ts), and the block under way (live.ts, liveBuild.ts, sitePlan.ts)
   anim/jobs/        build, extend, shrink, resize, demolish, relocate, settle, vanish, the speed preview, and their timing (schedule.ts)
 tests/              Vitest unit tests for core logic, animation timing, and brand rules
 ```
@@ -190,7 +193,8 @@ From spec section 22.2. Run through it before closing a milestone.
 - Dark theme has no unreadable text.
 - Strict palette: screenshot a build mid-phase and confirm every visible color
   is in section 5.1 or 5.2.
-- Block under way: the facade meets the now ring, and the crew stands on the
-  planks at that height.
-- At a block's end the roof goes on and the crew leaves; at the next block's
+- Block under way: step a fake clock through its time and check each phase,
+  setting out to strike, in order, with the crew on the deck or planks they
+  should be on and no one walking through the tower.
+- At a block's end the site is clear and its roof is on; at the next block's
   start the crew arrives. Later blocks are plans until then.

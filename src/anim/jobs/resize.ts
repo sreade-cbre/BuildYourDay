@@ -62,8 +62,9 @@ export function resizeJob(scene: JobScene, move: BlockMove, calm: boolean): Job 
   const grows = move.to.end - move.to.start > move.from.end - move.from.start;
   return {
     label: `${grows ? 'Extending' : 'Shrinking'} ${titleOf(move.to)}`,
+    borrows: ['crane'],
     start: () => {
-      scene.crew.park();
+      scene.crew.park({ machines: false });
       if (calm) {
         // Reduced motion: the block slides to its new size (spec 9.7).
         const c = new Choreography(scene.crew);

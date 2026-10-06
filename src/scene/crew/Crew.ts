@@ -144,10 +144,25 @@ export class Crew {
   /**
    * Sends everyone home: machines parked, workers hidden, props and dust
    * cleared, the crane's jib swung back over the depot. The mast keeps its
-   * height; jobs tween it, and settleMast sets it once the site is idle.
+   * height; jobs tween it, and settleMast sets it once the site is idle. A
+   * job that needs no crane or no machines leaves them be, since the block
+   * under way may be using them.
    */
-  park(): void {
+  park(parts: { crane?: boolean; machines?: boolean } = {}): void {
     for (const worker of this.workers) worker.hide();
+    if (parts.machines !== false) this.parkMachines();
+    if (parts.crane !== false) this.crane.setPose({ ...CRANE_PARK, hookY: this.crane.hookCeiling });
+    this.ball.hide();
+    this.hoist.hide();
+    this.rail.hide();
+    this.scaffold.hide();
+    this.dust.clear();
+    this.rubble.hide();
+    this.props.reset();
+  }
+
+  /** The bulldozer, excavator, mixer, and dump truck back on the depot, facing the plot. */
+  parkMachines(): void {
     const { bulldozer, excavator, mixer, dump } = HOMES;
     this.bulldozer.drive({ ...bulldozer, distance: 0 }, SITE_Y);
     this.bulldozer.setBlade(0);
@@ -157,14 +172,7 @@ export class Crew {
     this.mixer.setDrum(0);
     this.dumpTruck.drive({ ...dump, distance: 0 }, SITE_Y);
     this.dumpTruck.setTilt(0);
-    this.crane.setPose({ ...CRANE_PARK, hookY: this.crane.hookCeiling });
-    this.ball.hide();
-    this.hoist.hide();
-    this.rail.hide();
-    this.scaffold.hide();
-    this.dust.clear();
-    this.rubble.hide();
-    this.props.reset();
+    this.dumpTruck.setLoad(0);
   }
 
   /** Stands the mast 3 units over the tower top, never below 3 (spec 10.4). */

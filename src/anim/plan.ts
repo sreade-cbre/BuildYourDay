@@ -8,10 +8,11 @@ import type { BlockChange, StoreEvent } from '../core/store';
 // blocks at once. Free of three and the DOM, so it is unit tested.
 //
 // Blocks are built in real time, so what an edit shows depends on where its
-// block stands by the clock. A block whose time is up appears finished, the
-// block under way gets its crew, and a planned block is only a plan: edits to
-// it slide or fade, with no crew. The crane and the full crew animations are
-// for finished blocks.
+// block stands by the clock. A block whose time is up appears finished, and a
+// planned block is only a plan: edits to it slide or fade, with no crew. The
+// site of the block under way follows the clock on its own (live.ts), so it
+// needs no job here, except to bring down what stands when it is deleted.
+// The crane and the full crew animations are for finished blocks.
 
 export interface BlockMove {
   /** The block before the change. */
@@ -26,17 +27,13 @@ export const UNDO_SPEED = 3;
 /** Where blocks of the viewed day stand by the clock. */
 export interface PlanClock {
   stateOf(range: TimeRange): BuildState;
-  /** Minutes into the viewed day now, for the part of a block under way that stands. */
-  minutes: number;
+  /** For the block under way, the minute up to which its facade stands. */
+  builtTo(block: Block): number;
 }
 
 export type JobPlan =
   /** A block whose time is up appears, already finished. */
   | { kind: 'appear'; block: Block; speed?: number }
-  /** The crew starts the block under way. */
-  | { kind: 'start'; block: Block }
-  /** The crew finishes a block an edit has made done. */
-  | { kind: 'finish'; block: Block }
   /** A finished block, or the part of the block under way that stands, comes down. */
   | { kind: 'demolish'; block: Block }
   /** A planned block's plan fades away. */
@@ -88,46 +85,43 @@ function planMoves(moves: BlockMove[], selectedId: BlockId | null): JobPlan[] {
   return [{ kind: 'relocate', move: move!, settles }];
 }
 
-/** How a block that arrives shows: finished, started by the crew, or as a plan, which needs no job. */
+/**
+ * How a block that arrives shows: a finished one fades in, since its time is
+ * up; the block under way and a plan need no job, as the site and the tower
+ * show them as they stand.
+ */
 function arrival(block: Block, clock: PlanClock, speed?: number): JobPlan[] {
-  const state = clock.stateOf(block);
-  if (state === 'built') return [speed === undefined ? { kind: 'appear', block } : { kind: 'appear', block, speed }];
-  return state === 'building' ? [{ kind: 'start', block }] : [];
+  if (clock.stateOf(block) !== 'built') return [];
+  return [speed === undefined ? { kind: 'appear', block } : { kind: 'appear', block, speed }];
 }
 
 /**
  * A block that leaves: a finished one is demolished; the block under way
- * loses the part that stands, if a minute of it does; a plan fades.
+ * loses the part of its facade that stands, if a minute of it does; a plan,
+ * or a block under way with nothing closed yet, fades.
  */
 function departure(block: Block, clock: PlanClock): JobPlan[] {
   const state = clock.stateOf(block);
   if (state === 'built') return [{ kind: 'demolish', block }];
-  if (state === 'building' && clock.minutes - block.start >= 1) return [{ kind: 'demolish', block: { ...block, end: clock.minutes } }];
+  const built = state === 'building' ? clock.builtTo(block) : block.start;
+  if (built - block.start >= 1) return [{ kind: 'demolish', block: { ...block, end: built } }];
   return [{ kind: 'vanish', block }];
 }
 
 /**
- * A block whose times moved it from one part of the day to another. Out of
- * the plan into the block under way, the crew starts it; out of the block
- * under way into the finished part, the crew finishes it; from the plan into
- * the finished part, it appears finished. Any other crossing shows at once,
- * and the site for the block under way follows on its own.
+ * A block whose times moved it from one part of the day to another: from
+ * the plan into the finished part, it appears finished. Any other crossing
+ * shows at once, and the site for the block under way follows on its own.
  */
 function change(move: BlockMove, clock: PlanClock): JobPlan[] {
-  const from = clock.stateOf(move.from);
-  const to = clock.stateOf(move.to);
-  if (from === 'planned' && to === 'building') return [{ kind: 'start', block: move.to }];
-  if (from === 'building' && to === 'built') return [{ kind: 'finish', block: move.to }];
-  if (from === 'planned' && to === 'built') return [{ kind: 'appear', block: move.to }];
-  return [];
+  return clock.stateOf(move.from) === 'planned' && clock.stateOf(move.to) === 'built' ? [{ kind: 'appear', block: move.to }] : [];
 }
 
 /**
  * The jobs for a store event on the viewed day. Users' single edits animate;
  * an undone deletion of one block comes back fast (spec 12.6). Bulk changes,
  * such as copying a day, the sample day, imports, settings, and clearing a
- * day, finish whatever is playing and show at once, except that the crew
- * starts on a block whose time is under way.
+ * day, finish whatever is playing and show at once.
  */
 export function planJobs(event: StoreEvent, viewedDate: IsoDate, selectedId: BlockId | null, clock: PlanClock): Plan {
   if (event.type !== 'blocks') return FINISH;
@@ -139,10 +133,7 @@ export function planJobs(event: StoreEvent, viewedDate: IsoDate, selectedId: Blo
   if (origin === 'undo') {
     return added.length === 1 ? { finish: false, jobs: arrival(added[0]!.block, clock, UNDO_SPEED) } : FINISH;
   }
-  if (origin === 'copy' || origin === 'sample') {
-    const underWay = added.map((c) => c.block).filter((b) => clock.stateOf(b) === 'building');
-    return { finish: true, jobs: underWay.map((block) => ({ kind: 'start', block })) };
-  }
+  if (origin === 'copy' || origin === 'sample') return FINISH;
   if (origin !== 'user') return FINISH;
 
   // A new color applies at once, so anything mid-build finishes first, and

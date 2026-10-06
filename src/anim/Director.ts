@@ -15,11 +15,15 @@ export interface Job {
   /** Plays at this speed instead of the animation speed setting, for example 3 for an undo (spec 12.6). */
   speed?: number;
   /**
-   * Jobs that share a chain, such as the rapid build of a copied day, play in
-   * turn without hurrying each other (spec 12.8 and 20). Anything else that
-   * arrives still hurries the whole chain.
+   * Jobs that share a chain play in turn without hurrying each other.
+   * Anything else that arrives still hurries the whole chain.
    */
   chain?: object;
+  /**
+   * The shared crane and machines this job moves. While it plays, the block
+   * under way leaves them to it.
+   */
+  borrows?: ReadonlyArray<'crane' | 'machines'>;
 }
 
 /** Wall seconds a running job gets to finish when another job arrives. */

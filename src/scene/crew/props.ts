@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { BLOCK_FOOTPRINT } from '../../core/layout';
 import type { SwatchToken } from '../../core/model';
-import { BlockMesh } from '../BlockMesh';
+import { BlockMesh, CAP_SIZE, CAP_THICKNESS } from '../BlockMesh';
 import { PAD_OFFSET, PLOT_TOP_Y, SLAB_SIZE, SLAB_THICKNESS, padGeometry, slabEdgeGeometry, slabGeometry } from '../Foundation';
 import { colorOf, materials } from '../materials';
 
@@ -10,6 +10,9 @@ import { colorOf, materials } from '../materials';
 // facade panels, and a copy of the block that a clipping plane reveals floor
 // by floor. All pooled. The facade and panel materials live as long as the
 // site and are recolored for each job, so their shader programs stay compiled.
+//
+// A build in real time also uses corner stakes, the dug pit, a rebar mat, a
+// deck on each floor, a concrete pump line, and a roof cap for the crane.
 
 const COLUMN_SIZE = 0.12;
 export const BEAM_SIZE = 0.1;
@@ -19,12 +22,24 @@ const PANEL_POOL = 3;
 const OUTLINE_POINTS = 96;
 /** A stacked block's poured floor: as wide as the block and this thick. */
 const FLOOR_THICKNESS = 0.05;
+/** Floor decks laid on each ring of beams, inside the columns. */
+export const DECK_THICKNESS = 0.05;
+const DECK_SPAN = BLOCK_FOOTPRINT - 0.18;
+const REBAR_BARS = 9;
+const STAKE_HEIGHT = 0.32;
 
 const columnGeometry = new THREE.BoxGeometry(COLUMN_SIZE, 1, COLUMN_SIZE).translate(0, 0.5, 0);
 const beamGeometry = new THREE.BoxGeometry(1, BEAM_SIZE, BEAM_SIZE);
 const panelGeometry = new THREE.BoxGeometry(BLOCK_FOOTPRINT, 1, 0.1);
 const legGeometry = new THREE.CylinderGeometry(0.012, 0.012, 0.44, 5).translate(0, -0.22, 0);
 const instrumentGeometry = new THREE.BoxGeometry(0.09, 0.07, 0.12);
+const deckGeometry = new THREE.BoxGeometry(DECK_SPAN, DECK_THICKNESS, DECK_SPAN);
+const rebarGeometry = new THREE.BoxGeometry(SLAB_SIZE - 0.3, 0.025, 0.025);
+const stakeGeometry = new THREE.BoxGeometry(0.035, STAKE_HEIGHT, 0.035).translate(0, STAKE_HEIGHT / 2, 0);
+const flagGeometry = new THREE.BoxGeometry(0.1, 0.06, 0.01).translate(0.05, STAKE_HEIGHT - 0.04, 0);
+const pitGeometry = new THREE.BoxGeometry(SLAB_SIZE + 0.3, 0.01, SLAB_SIZE + 0.3);
+const roofGeometry = new THREE.BoxGeometry(CAP_SIZE, CAP_THICKNESS, CAP_SIZE).translate(0, -CAP_THICKNESS / 2, 0);
+const pipeGeometry = new THREE.BoxGeometry(0.1, 1, 0.1).translate(0, 0.5, 0);
 const HIDDEN = new THREE.Matrix4().makeScale(0, 0, 0);
 /** Stands in for an unbounded clipping height; shader uniforms should not carry Infinity. */
 const FAR = 1e5;
@@ -35,6 +50,22 @@ export class SiteProps {
   readonly outline: THREE.Line;
   readonly pads: THREE.Mesh[] = [];
   readonly slab: THREE.Mesh;
+  /** A stacked block's poured floor, on the roof below it. */
+  readonly floor: THREE.Mesh;
+  /** Survey stakes at the footprint's corners, each with a flag. */
+  readonly stakes: THREE.Group[] = [];
+  /** The dug pit, a dark patch on the plot that widens as the digging goes on. */
+  readonly pit: THREE.Mesh;
+  /** The rebar mat, tied over the pit before the slab is poured. */
+  readonly rebar: THREE.InstancedMesh;
+  /** A deck laid on each floor's ring of beams. */
+  readonly decks: THREE.InstancedMesh;
+  /** The concrete pump line up the tower's right side to a stacked floor. */
+  readonly pump = new THREE.Group();
+  /** The roof cap on its way up on the crane. */
+  readonly roof: THREE.Mesh;
+  private readonly pumpRiser: THREE.Mesh;
+  private readonly pumpBoom: THREE.Mesh;
   readonly columns: THREE.Mesh[] = [];
   readonly beams: THREE.InstancedMesh;
   readonly panels: THREE.Mesh[] = [];
@@ -100,6 +131,48 @@ export class SiteProps {
     this.slab.castShadow = true;
     this.slab.receiveShadow = true;
     this.slab.add(new THREE.LineSegments(slabEdgeGeometry, materials.line('slateLight')));
+    this.floor = new THREE.Mesh(slabGeometry, materials.solid('slatePale'));
+    this.floor.castShadow = true;
+    this.floor.receiveShadow = true;
+
+    const stakeMaterial = materials.solid('slateDark');
+    const flagMaterial = materials.solid('blue');
+    for (let i = 0; i < 4; i++) {
+      const stake = new THREE.Group();
+      const post = new THREE.Mesh(stakeGeometry, stakeMaterial);
+      post.castShadow = true;
+      stake.add(post, new THREE.Mesh(flagGeometry, flagMaterial));
+      this.stakes.push(stake);
+    }
+    this.pit = new THREE.Mesh(pitGeometry, materials.solid('slate'));
+    this.pit.receiveShadow = true;
+    this.pit.position.y = PLOT_TOP_Y + 0.006;
+    this.rebar = new THREE.InstancedMesh(rebarGeometry, materials.solid('slateDark'), REBAR_BARS * 2);
+    const bar = new THREE.Matrix4();
+    const turned = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2);
+    for (let i = 0; i < REBAR_BARS; i++) {
+      const offset = -SLAB_SIZE / 2 + 0.3 + (i * (SLAB_SIZE - 0.6)) / (REBAR_BARS - 1);
+      // Bars one way, then the other, so the mat fills in as a grid.
+      bar.compose(new THREE.Vector3(0, -0.1, offset), new THREE.Quaternion(), new THREE.Vector3(1, 1, 1));
+      this.rebar.setMatrixAt(i * 2, bar);
+      bar.compose(new THREE.Vector3(offset, -0.075, 0), turned, new THREE.Vector3(1, 1, 1));
+      this.rebar.setMatrixAt(i * 2 + 1, bar);
+    }
+    this.rebar.count = 0;
+    this.rebar.frustumCulled = false;
+    this.decks = new THREE.InstancedMesh(deckGeometry, materials.solid('slatePale'), MAX_RINGS);
+    this.decks.castShadow = true;
+    this.decks.receiveShadow = true;
+    this.decks.frustumCulled = false;
+    for (let i = 0; i < MAX_RINGS; i++) this.decks.setMatrixAt(i, HIDDEN);
+    this.decks.count = 0;
+    this.roof = new THREE.Mesh(roofGeometry, materials.blockCap('navy'));
+    this.roof.castShadow = true;
+    const pipe = materials.solid('slateDark');
+    this.pumpRiser = new THREE.Mesh(pipeGeometry, pipe);
+    this.pumpBoom = new THREE.Mesh(pipeGeometry, pipe);
+    this.pumpBoom.rotation.z = Math.PI / 2;
+    this.pump.add(this.pumpRiser, this.pumpBoom);
 
     for (let i = 0; i < 4; i++) {
       const column = new THREE.Mesh(columnGeometry, materials.solid('slateDark'));
@@ -142,6 +215,7 @@ export class SiteProps {
     fadeHolder.visible = false;
 
     this.root.add(this.tripod, this.outline, ...this.pads, this.slab, ...this.columns, this.beams, ...this.panels, this.cladding.root, fadeHolder);
+    this.root.add(this.floor, ...this.stakes, this.pit, this.rebar, this.decks, this.pump, this.roof);
     this.reset();
   }
 
@@ -154,6 +228,7 @@ export class SiteProps {
     const color = materials.blockBody(token).color;
     for (const material of [this.claddingBody, this.fadeBody, ...this.panelMaterials]) material.color.copy(color);
     this.fadeCap.color.copy(materials.blockCap(token).color);
+    this.roof.material = materials.blockCap(token);
     this.claddingEdges.color.copy(materials.blockEdges(token).color);
     this.claddingEdges.opacity = 0;
     this.cladding.useMaterials(
@@ -204,9 +279,61 @@ export class SiteProps {
   setFloor(y: number, rise: number): void {
     const span = (SLAB_SIZE - 0.2) / SLAB_SIZE;
     const depth = (FLOOR_THICKNESS / SLAB_THICKNESS) * Math.max(0.001, rise);
-    this.slab.visible = rise > 0;
-    this.slab.position.y = y + SLAB_THICKNESS * depth;
-    this.slab.scale.set(span, depth, span);
+    this.floor.visible = rise > 0;
+    this.floor.position.y = y + SLAB_THICKNESS * depth;
+    this.floor.scale.set(span, depth, span);
+  }
+
+  /** A survey stake at a footprint corner, driven in from 0 (none) to 1. */
+  setStake(index: number, x: number, z: number, y: number, driven: number): void {
+    const stake = this.stakes[index]!;
+    stake.visible = driven > 0;
+    stake.position.set(x, y, z);
+    stake.scale.set(1, Math.max(0.001, driven), 1);
+  }
+
+  /** The pit widens from nothing (0) to the slab's footprint (1). */
+  setPit(share: number): void {
+    this.pit.visible = share > 0;
+    const s = Math.max(0.001, share);
+    this.pit.scale.set(s, 1, s);
+  }
+
+  /** The rebar mat, from no bars (0) to all of them (1). */
+  setRebar(share: number): void {
+    this.rebar.count = Math.round(Math.min(1, Math.max(0, share)) * REBAR_BARS * 2);
+  }
+
+  /** Floor decks there can be, one per beam ring. */
+  setDeckCount(decks: number): void {
+    this.decks.count = Math.max(0, Math.min(MAX_RINGS, decks));
+  }
+
+  /** Lays a deck with its underside on a ring at `y`, spreading from the middle (0) to full (1). */
+  setDeck(index: number, y: number, share: number): void {
+    const matrix = new THREE.Matrix4();
+    if (share <= 0) matrix.copy(HIDDEN);
+    else matrix.compose(new THREE.Vector3(0, y + DECK_THICKNESS / 2, 0), new THREE.Quaternion(), new THREE.Vector3(share, 1, share));
+    this.decks.setMatrixAt(index, matrix);
+    this.decks.instanceMatrix.needsUpdate = true;
+  }
+
+  /** The pump line from the ground at `baseY` up to a floor at `topY`, raised from 0 to 1. */
+  setPump(baseY: number, topY: number, rise: number): void {
+    this.pump.visible = rise > 0.001;
+    const height = Math.max(0.01, (topY + 0.35 - baseY) * rise);
+    this.pumpRiser.position.set(2.32, baseY, -0.8);
+    this.pumpRiser.scale.y = height;
+    // The boom reaches in over the floor once the riser is up.
+    this.pumpBoom.position.set(2.32, baseY + height, -0.8);
+    this.pumpBoom.scale.y = 1.6 * Math.max(0, rise * 2 - 1);
+    this.pumpBoom.visible = rise > 0.5;
+  }
+
+  /** The roof cap, its top at a point, or hidden. */
+  setRoof(point: THREE.Vector3 | null): void {
+    this.roof.visible = point !== null;
+    if (point) this.roof.position.copy(point);
   }
 
   /** Corner columns from `baseY` up to `topY`. */
@@ -291,6 +418,15 @@ export class SiteProps {
 
   /** Hides everything. */
   reset(): void {
+    this.floor.visible = false;
+    for (const stake of this.stakes) stake.visible = false;
+    this.pit.visible = false;
+    this.rebar.count = 0;
+    for (let i = 0; i < MAX_RINGS; i++) this.decks.setMatrixAt(i, HIDDEN);
+    this.decks.instanceMatrix.needsUpdate = true;
+    this.decks.count = 0;
+    this.pump.visible = false;
+    this.roof.visible = false;
     this.tripod.visible = false;
     this.tripod.scale.setScalar(1);
     this.setOutline(0);

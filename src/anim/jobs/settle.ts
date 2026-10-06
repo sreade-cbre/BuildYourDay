@@ -71,7 +71,7 @@ export function settleJob(scene: JobScene, moves: BlockMove[], calm: boolean): J
   return {
     label: `Moving ${titleOf(moves[0]!.to)}`,
     start: () => {
-      scene.crew.park();
+      scene.crew.park({ crane: false, machines: false });
       const c = new Choreography(scene.crew);
       moves.forEach((move, i) => addSettle(c, scene, move, claims[i]!, 0, calm));
       return c.tl;

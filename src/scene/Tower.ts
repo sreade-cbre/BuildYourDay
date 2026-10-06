@@ -143,6 +143,8 @@ export class Tower {
   private nowY = 0;
   /** The block under way on the viewed day, drawn split, if any. */
   private buildingId: BlockId | null = null;
+  /** How far the crew has got with the block under way: the facade's height, and whether the roof is on. */
+  private live: { id: BlockId; reveal: number; roof: boolean } | null = null;
   private readonly planeBelow = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0);
   private readonly planeAbove = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   private readonly splitBelow: THREE.MeshStandardMaterial;
@@ -274,10 +276,7 @@ export class Tower {
     return buildState(range, this.store.viewedDate, this.clock);
   }
 
-  /** The minute the tower last showed, for the part of the block under way that stands. */
-  get clockMinutes(): number {
-    return this.clock.minutes;
-  }
+
 
   /**
    * Shows the whole tower `offset` units from where it stands, then slides it
@@ -310,15 +309,21 @@ export class Tower {
     this.applySplit();
   }
 
-  /** The now ring's height as last set. */
-  get nowHeight(): number {
-    return this.nowY;
+  /**
+   * Tells the tower how far the crew has got with the block under way: how
+   * high its facade has closed and whether its roof is on. Null when no crew
+   * is at work on it.
+   */
+  setLive(id: BlockId | null, reveal = 0, roof = false): void {
+    this.live = id === null ? null : { id, reveal, roof };
+    this.applySplit();
   }
 
-  /** Cuts the block under way where its job says, or at the now ring. */
+  /** Cuts the block under way where its facade has got to, or at the now ring when no crew is at work on it. */
   private applySplit(): void {
     const id = this.buildingId;
-    let y = (id ? this.holds.current(id)?.reveal : undefined) ?? this.nowY;
+    const live = id && this.live?.id === id ? this.live : null;
+    let y = live?.reveal ?? this.nowY;
     // Until the facade has started, the cut stays clear of the base, where
     // a face lying on the cut would flicker.
     const base = id ? this.views.get(id)?.mesh.baseY : undefined;
@@ -452,6 +457,8 @@ export class Tower {
       view.mesh.root.position.z = pose.z;
       view.mesh.root.visible = claim?.pose !== null;
       view.label.setOpacity(claim ? claim.labelOpacity : view.dimmed ? DIMMED_OPACITY : 1);
+      // The block under way has its roof once the crane has set it.
+      if (view.block.id === this.buildingId) view.mesh.cap.visible = this.live?.id === this.buildingId && this.live.roof;
     }
   }
 

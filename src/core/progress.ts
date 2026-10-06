@@ -41,13 +41,3 @@ export function nextChange(blocks: readonly TimeRange[], minutes: number): numbe
   }
   return next;
 }
-
-/**
- * Blocks whose start or end the clock passed between two readings on the
- * same day, in time order: the ones it finished and the ones it started.
- */
-export function crossings<T extends TimeRange>(blocks: readonly T[], from: number, to: number): { finished: T[]; started: T[] } {
-  const finished = blocks.filter((b) => b.start <= from && from < b.end && b.end <= to);
-  const started = blocks.filter((b) => from < b.start && b.start <= to && to < b.end);
-  return { finished, started };
-}

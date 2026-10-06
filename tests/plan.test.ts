@@ -18,9 +18,9 @@ function moved(from: Block, start: number, end = start + (from.end - from.start)
   return { kind: 'moved', block: { ...from, start, end }, previous: from };
 }
 
-/** The viewed day at a minute: earlier blocks done, later ones planned. */
-function at(minutes: number): PlanClock {
-  return { stateOf: (range) => buildState(range, DAY, { today: DAY, minutes }), minutes };
+/** The viewed day at a minute: earlier blocks done, later ones planned; `built` is where the block under way's facade has got to. */
+function at(minutes: number, built?: number): PlanClock {
+  return { stateOf: (range) => buildState(range, DAY, { today: DAY, minutes }), builtTo: (block) => built ?? block.start };
 }
 
 /** Late in the day, when every block in these tests is done. */
@@ -37,18 +37,18 @@ describe('isAdjacentMove', () => {
 });
 
 describe('planJobs', () => {
-  it('shows an added block by the clock: done appears, under way starts, planned needs nothing', () => {
+  it('shows an added block by the clock: done appears, while under way and planned need no job', () => {
     const a = block('a', 540, 600);
     const added = blocksEvent([{ kind: 'added', block: a }]);
     expect(planJobs(added, DAY, null, EVENING)).toEqual({ finish: false, jobs: [{ kind: 'appear', block: a }] });
-    expect(planJobs(added, DAY, null, at(570))).toEqual({ finish: true, jobs: [{ kind: 'start', block: a }] });
+    expect(planJobs(added, DAY, null, at(570))).toEqual({ finish: true, jobs: [] });
     expect(planJobs(added, DAY, null, DAWN)).toEqual({ finish: false, jobs: [] });
   });
 
   it('brings back one undone deletion fast, and shows a whole day at once', () => {
     const a = block('a', 540, 600);
     expect(planJobs(blocksEvent([{ kind: 'added', block: a }], 'undo'), DAY, null, EVENING).jobs).toEqual([{ kind: 'appear', block: a, speed: 3 }]);
-    expect(planJobs(blocksEvent([{ kind: 'added', block: a }], 'undo'), DAY, null, at(560)).jobs).toEqual([{ kind: 'start', block: a }]);
+    expect(planJobs(blocksEvent([{ kind: 'added', block: a }], 'undo'), DAY, null, at(560)).jobs).toEqual([]);
     const day = [a, block('b', 600, 660)].map((b) => ({ kind: 'added' as const, block: b }));
     expect(planJobs(blocksEvent(day, 'undo'), DAY, null, EVENING)).toEqual({ finish: true, jobs: [] });
   });
@@ -63,12 +63,12 @@ describe('planJobs', () => {
     expect(planJobs(blocksEvent(clear), DAY, null, EVENING)).toEqual({ finish: true, jobs: [] });
   });
 
-  it('demolishes only the part of the block under way that stands', () => {
+  it('demolishes only the facade that stands on the block under way', () => {
     const a = block('a', 540, 600);
     const removed = blocksEvent([{ kind: 'removed', block: a, previous: a }]);
-    expect(planJobs(removed, DAY, null, at(565.5))).toEqual({ finish: true, jobs: [{ kind: 'demolish', block: { ...a, end: 565.5 } }] });
-    // Under a minute in, nothing stands yet, so its plan fades.
-    expect(planJobs(removed, DAY, null, at(540.5)).jobs).toEqual([{ kind: 'vanish', block: a }]);
+    expect(planJobs(removed, DAY, null, at(590, 572.5))).toEqual({ finish: true, jobs: [{ kind: 'demolish', block: { ...a, end: 572.5 } }] });
+    // Before the facade, nothing stands that a wrecking ball could take, so its plan fades.
+    expect(planJobs(removed, DAY, null, at(560, 540)).jobs).toEqual([{ kind: 'vanish', block: a }]);
   });
 
   it('resizes a done block with the crew and a plan plainly', () => {
@@ -79,14 +79,13 @@ describe('planJobs', () => {
     expect(planJobs(event, DAY, null, DAWN).jobs).toEqual([{ kind: 'resize', move: { from: a, to: next }, calm: true }]);
   });
 
-  it('starts, finishes, or shows a block whose times carry it across the clock', () => {
+  it('shows a block whose times carry it across the clock as it now stands', () => {
     const a = block('a', 540, 600);
-    // A plan stretched back over the time: the crew starts it.
+    // A plan stretched back over the time, or the block under way cut short behind it.
     const reached = { ...a, start: 510 };
-    expect(planJobs(blocksEvent([{ kind: 'resized', block: reached, previous: a }]), DAY, null, at(520)).jobs).toEqual([{ kind: 'start', block: reached }]);
-    // The block under way cut short behind the time: the crew finishes it.
+    expect(planJobs(blocksEvent([{ kind: 'resized', block: reached, previous: a }]), DAY, null, at(520)).jobs).toEqual([]);
     const cut = { ...a, end: 555 };
-    expect(planJobs(blocksEvent([{ kind: 'resized', block: cut, previous: a }]), DAY, null, at(560))).toEqual({ finish: true, jobs: [{ kind: 'finish', block: cut }] });
+    expect(planJobs(blocksEvent([{ kind: 'resized', block: cut, previous: a }]), DAY, null, at(560))).toEqual({ finish: true, jobs: [] });
     // A plan moved into the finished part of the day appears done.
     const early = { ...a, start: 420, end: 480 };
     expect(planJobs(blocksEvent([moved(a, 420)]), DAY, null, at(500)).jobs).toEqual([{ kind: 'appear', block: early }]);
@@ -135,12 +134,12 @@ describe('planJobs', () => {
     expect(job.kind === 'relocate' && job.move.to.id).toBe('b');
   });
 
-  it('shows a copied day and the sample day at once, with the crew on the block under way', () => {
+  it('shows a copied day and the sample day at once', () => {
     const late = block('late', 600, 660);
     const early = block('early', 420, 480);
     const added = [late, early].map((b) => ({ kind: 'added' as const, block: b }));
     expect(planJobs(blocksEvent(added, 'copy'), DAY, null, EVENING)).toEqual({ finish: true, jobs: [] });
-    expect(planJobs(blocksEvent(added, 'sample'), DAY, null, at(630))).toEqual({ finish: true, jobs: [{ kind: 'start', block: late }] });
+    expect(planJobs(blocksEvent(added, 'sample'), DAY, null, at(630))).toEqual({ finish: true, jobs: [] });
   });
 
   it('finishes running jobs for bulk changes and for anything outside block edits', () => {

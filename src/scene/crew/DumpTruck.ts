@@ -13,6 +13,8 @@ export class DumpTruck {
   private readonly tilt = new THREE.Group();
   private readonly wheels: Wheel[] = [];
   private readonly bedCenter = new THREE.Object3D();
+  /** Spoil in the bed. */
+  private readonly load: THREE.Mesh;
 
   constructor() {
     this.root.name = 'dump-truck';
@@ -51,7 +53,18 @@ export class DumpTruck {
     }
     this.bedCenter.position.set(0, 0.12, length / 2);
     this.tilt.add(this.bedCenter);
+    this.load = box(0.68, 0.24, 0.96, materials.solid('slate'));
+    this.load.position.set(0, 0.02, length / 2);
+    this.load.visible = false;
+    this.tilt.add(this.load);
     this.root.add(this.tilt);
+  }
+
+  /** How full the bed is, from empty (0) to heaped (1). */
+  setLoad(share: number): void {
+    this.load.visible = share > 0.01;
+    this.load.scale.y = Math.max(0.01, share);
+    this.load.position.y = 0.02 + 0.12 * share;
   }
 
   /** Bed angle in radians; positive lifts the front to dump out the back. */

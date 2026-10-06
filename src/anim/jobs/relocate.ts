@@ -27,8 +27,9 @@ export function relocateJob(scene: JobScene, move: BlockMove, settles: BlockMove
   const partnerClaims = settles.map((m) => claimMove(scene, m));
   return {
     label: `Moving ${titleOf(move.to)}`,
+    borrows: ['crane'],
     start: () => {
-      scene.crew.park();
+      scene.crew.park({ machines: false });
       return calm ? calmTimeline(scene, move, claim, settles, partnerClaims) : relocateTimeline(scene, move, claim, settles, partnerClaims);
     },
     end: () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildProgress, buildState, crossings, nextChange } from '../src/core/progress';
+import { buildProgress, buildState, nextChange } from '../src/core/progress';
 
 const TODAY = '2026-10-06';
 const block = (start: number, end: number) => ({ start, end });
@@ -41,20 +41,5 @@ describe('nextChange', () => {
     expect(nextChange(blocks, 700)).toBe(720);
     expect(nextChange(blocks, 750)).toBeNull();
     expect(nextChange([], 0)).toBeNull();
-  });
-});
-
-describe('crossings', () => {
-  it('reports blocks the clock finished and started between two readings', () => {
-    const a = block(540, 600);
-    const b = block(600, 660);
-    const c = block(700, 760);
-    expect(crossings([a, b, c], 599.5, 600.2)).toEqual({ finished: [a], started: [b] });
-    expect(crossings([a, b, c], 610, 640)).toEqual({ finished: [], started: [] });
-    expect(crossings([a, b, c], 659, 701)).toEqual({ finished: [b], started: [c] });
-  });
-
-  it('skips a block that started and ended between readings', () => {
-    expect(crossings([block(540, 545)], 530, 560)).toEqual({ finished: [], started: [] });
   });
 });
