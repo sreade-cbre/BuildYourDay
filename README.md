@@ -168,7 +168,7 @@ and Cancel puts everything back.
 | Labels | Always, or only on hover. |
 | Weather past blocks | On today, blocks that are done fade to a paler, matte finish. |
 | Theme | Light or Dark. |
-| Palette mode | Strict brand colors (default), or Accents, which adds grass green for the plot and hi-vis orange for worker vests. |
+| Palette mode | Strict brand colors (default), or Accents, which adds hi-vis orange for worker vests and site cones. Grass is green in either mode. |
 | Data | Export JSON, Import JSON, Clear this day, Clear all data (type clear to confirm). |
 
 ## Project layout

@@ -917,3 +917,29 @@ what was decided and why. Section numbers refer to `TIME_TOWER_SPEC.md`.
     but for a few seconds at the very end: the longest still moment is 6
     seconds on a 90 minute block, 3 on an hour, none on 15 minutes, and 19
     on 4 hours, where it used to be up to a minute. The crane is moving 81 to 87% of the time.
+
+### Grass round the site
+
+39. **A lawn round the site (your request, October 6, 2026: "add green
+    grass around the construction site").** The main site now stands in a
+    lawn. The ground is green right up to the fence and fades into the
+    theme's ground, spec 5.8's white or slateDark, between 14 and 45 units
+    out, so the far ground and the haze look as they did. About 6,000
+    blades grow outside the fence, thickest along it and thinning out to 6
+    units, kept off the street, the ramp, and the cones at the gate. On the
+    dark theme the lawn darkens 55% of the way to slateDark, as the ground
+    does, and a theme change tweens it with the rest. The street now runs
+    the width of the ground into the haze both ways, where it used to stop
+    in the open a few units past the fence. The speed preview's side plot
+    has no lawn.
+40. **Grass is green in either palette mode.** Spec 5.3 keeps green to the
+    opt-in accents mode and draws strict mode's grass in slateLight. A green
+    lawn round a slateLight plot would put a gray patch of grass inside a
+    green field on every day of plans, so the plot's grass is green too,
+    from the same `grass` token, and accents mode now adds only hi-vis
+    orange, for the vests and cones. The settings note and the README say
+    so. No new color comes in: `grass` is the token the spec already had.
+41. **Measured.** The blades add one draw call and about 48,000 triangles,
+    and cast no shadows. Mid build at 11:20 in headless Chrome, a frame
+    every 16.7 ms, 95th percentile 16.8 ms, with no console errors through
+    theme changes both ways.

@@ -19,7 +19,7 @@
   --slatePale: rgb(202 206 208);
   --slateDark: rgb(56 63 67);
 
-  /* Accents palette mode only. */
+  /* Outside the brand palette: grass in either mode, hi-vis in accents mode only. */
   --grass: rgb(127 168 107);
   --hiVis: rgb(242 140 40);
 

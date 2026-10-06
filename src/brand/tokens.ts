@@ -22,8 +22,9 @@ export const tokens = {
 } as const;
 
 /**
- * The two extra colors allowed only in the opt-in accents palette mode
- * (spec section 5.3). Used for the grass plot and worker vests only.
+ * The two colors outside the brand palette (spec section 5.3). Grass is
+ * used for grass only, in either palette mode. Hi-vis is used for worker
+ * vests and site cones only, in the opt-in accents mode.
  */
 export const accentTokens = {
   grass: '#7FA86B',

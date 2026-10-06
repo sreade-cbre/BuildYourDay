@@ -27,7 +27,7 @@ const SWATCH_NAMES: Record<SwatchToken, string> = {
   slate: 'Slate', slateLight: 'Slate light', slateDark: 'Slate dark',
 };
 
-export const ACCENTS_NOTE = 'Adds grass green and hi-vis orange outside the brand palette.';
+export const ACCENTS_NOTE = 'Adds hi-vis orange outside the brand palette.';
 
 type Choice<T> = { value: T; label: string };
 

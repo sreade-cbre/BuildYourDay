@@ -21,10 +21,18 @@ const DEPOT_Y = PLOT_TOP_Y - 0.02;
 const PANEL_LENGTH = 1.15;
 const PANEL_HEIGHT = 0.62;
 /** Where the site entrance opens in the fence along the depot's front. */
-const GATE = { from: 6.0, to: 8.4, z: 4.35 };
+export const GATE = { from: 6.0, to: 8.4, z: 4.35 };
+/** What the fence closes in, as [minX, minZ, maxX, maxZ]: the plot's square and the depot's. */
+export const FENCED: ReadonlyArray<readonly [number, number, number, number]> = [
+  [-5.35, -5.35, 5.35, 5.35],
+  [5.35, -4.35, 11.35, 4.35],
+];
 /** The street in front of the site, and the ramp from it up to the depot. */
 export const ROAD_Z = 6.6;
+export const ROAD_WIDTH = 1.4;
 export const RAMP = { start: 4.0, end: 5.2 };
+/** The street runs the width of the ground, out into the haze both ways. */
+const ROAD_LENGTH = 200;
 
 const unitBox = new THREE.BoxGeometry(1, 1, 1);
 const unitCylinder = new THREE.CylinderGeometry(0.5, 0.5, 1, 12);
@@ -273,8 +281,8 @@ export class SiteYard {
   private createRoad(): THREE.Group {
     const group = new THREE.Group();
     group.name = 'road';
-    group.add(block(materials.solid('slateLight', 1), 3, GROUND_Y, ROAD_Z, 30, 0.004, 1.4));
-    for (let x = -11; x <= 17; x += 1.6) group.add(block(materials.solid('white'), x, GROUND_Y + 0.004, ROAD_Z, 0.7, 0.003, 0.06));
+    group.add(block(materials.solid('slateLight', 1), 0, GROUND_Y, ROAD_Z, ROAD_LENGTH, 0.004, ROAD_WIDTH));
+    for (let x = -ROAD_LENGTH / 2 + 1; x <= ROAD_LENGTH / 2 - 1; x += 1.6) group.add(block(materials.solid('white'), x, GROUND_Y + 0.004, ROAD_Z, 0.7, 0.003, 0.06));
     // The ramp: a slope from the road up to the depot's front edge.
     const rise = DEPOT_Y - GROUND_Y;
     const run = RAMP.end - RAMP.start;

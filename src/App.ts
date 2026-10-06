@@ -324,7 +324,6 @@ export class App {
     const root = new SceneRoot(host, settings.theme);
     const ground = new Ground({ x: -3.6, z: 4.0, facing: DEFAULT_AZIMUTH });
     ground.setTheme(settings.theme);
-    ground.setPaletteMode(settings.paletteMode);
     ground.setDate(this.store.viewedDate);
     root.scene.add(ground.root);
 
@@ -556,10 +555,7 @@ export class App {
     if (!previous || previous.theme !== current.theme) this.applyTheme(current.theme, previous !== null);
     const scene = this.scene;
     if (!scene) return;
-    if (!previous || previous.paletteMode !== current.paletteMode) {
-      scene.ground.setPaletteMode(current.paletteMode);
-      materials.setPaletteMode(current.paletteMode);
-    }
+    if (!previous || previous.paletteMode !== current.paletteMode) materials.setPaletteMode(current.paletteMode);
     if (!previous || previous.dayStart !== current.dayStart || previous.dayEnd !== current.dayEnd) {
       // A new day window re-lays out the tower (done by Tower) and reframes the camera.
       const animate = previous !== null && !this.reducedMotion();
@@ -584,6 +580,7 @@ export class App {
         [sky!, background],
         [fog!, background],
         [scene.ground.groundColor, Ground.groundFor(theme)],
+        [scene.ground.lawnColor, Ground.lawnFor(theme)],
       ],
       animate && !this.reducedMotion() ? 0.4 : 0,
     );
@@ -934,7 +931,6 @@ export class App {
       scene.root.scene.add(side.root);
       this.sideGround = side;
     }
-    this.sideGround.setPaletteMode(this.store.settings.paletteMode);
     return this.sideGround;
   }
 

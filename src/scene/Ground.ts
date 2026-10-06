@@ -1,16 +1,18 @@
 import * as THREE from 'three';
 import { tokens } from '../brand/tokens';
 import { DEPOT_OFFSET, PLOT_SIZE } from '../core/layout';
-import type { IsoDate, PaletteMode, Theme } from '../core/model';
+import type { IsoDate, Theme } from '../core/model';
 import { hashString, mulberry32, randomRange } from '../core/rng';
 import { formatDateTitle } from '../core/time';
 import { FONT_HEADING, context2d, font } from './canvasText';
 import { PLOT_TOP_Y } from './Foundation';
 import { colorOf, materials } from './materials';
-import { SiteYard } from './SiteYard';
+import { FENCED, GATE, ROAD_WIDTH, ROAD_Z, SiteYard } from './SiteYard';
 
 // The ground, the plot the tower stands on, the depot pad, and the site sign
-// (spec section 8.2).
+// (spec section 8.2). The main site also stands in a lawn: the ground is
+// green round the fence and fades into the theme's ground further out, with
+// blades thickest by the fence.
 
 export const PLOT_THICKNESS = 0.3;
 /** The plot is a raised tile, so the wider ground sits at its base. */
@@ -25,6 +27,14 @@ export const DEPOT_DEPTH = 8;
 export const DEPOT_TOP_Y = PLOT_TOP_Y - 0.02;
 const GROUND_SIZE = 200;
 const GRASS_COUNT = 2500;
+/** Blades in the lawn outside the fence, out to LAWN_BLADE_REACH and thinning as they go. */
+const LAWN_BLADE_COUNT = 6000;
+const LAWN_BLADE_REACH = 6;
+/** The lawn is all green this far out from the fence, then fades into the ground by LAWN_FADE_END. */
+const LAWN_FADE_START = 14;
+const LAWN_FADE_END = 45;
+/** How far the lawn darkens toward slateDark on the dark theme, as the ground does. */
+const NIGHT_LAWN_SHARE = 0.55;
 /** Half width of the strip the bulldozer clears across the plot: all of it, as a real site strips its topsoil. */
 export const CLEARED_HALF_WIDTH = PLOT_SIZE / 2;
 
@@ -42,6 +52,8 @@ export interface SignPlacement {
 export class Ground {
   readonly root = new THREE.Group();
   readonly grass: THREE.InstancedMesh;
+  /** The lawn's green, shared by the ground's shader and the lawn's blades, so a theme change moves both. */
+  readonly lawnColor = colorOf('grass');
   /** The plot slab; clicking it starts a new block (spec 12.1). */
   readonly plotMesh: THREE.Mesh;
   private readonly groundMaterial: THREE.MeshStandardMaterial;
@@ -57,7 +69,6 @@ export class Ground {
   private prepared = false;
   /** True after a partial clear or fade, so setPrepared always settles the plot. */
   private partial = false;
-  private palette: PaletteMode = 'strict';
 
   /**
    * With a sign placement this is the main site, with the wide ground plane
@@ -67,7 +78,7 @@ export class Ground {
   constructor(sign: SignPlacement | null) {
     this.root.name = sign ? 'ground' : 'side-ground';
 
-    this.groundMaterial = new THREE.MeshStandardMaterial({ color: colorOf('white'), roughness: 1, metalness: 0 });
+    this.groundMaterial = lawnMaterial(this.lawnColor);
     if (sign) {
       const ground = new THREE.Mesh(new THREE.PlaneGeometry(GROUND_SIZE, GROUND_SIZE), this.groundMaterial);
       ground.rotation.x = -Math.PI / 2;
@@ -78,7 +89,7 @@ export class Ground {
     }
 
     // The plot top is its own material so site prep can recolor it.
-    this.plotTopMaterial = new THREE.MeshStandardMaterial({ color: colorOf('slateLight'), roughness: 0.95, metalness: 0 });
+    this.plotTopMaterial = new THREE.MeshStandardMaterial({ color: colorOf('grass'), roughness: 0.95, metalness: 0 });
     const side = materials.solid('slate');
     const plot = new THREE.Mesh(
       new THREE.BoxGeometry(PLOT_SIZE, PLOT_THICKNESS, PLOT_SIZE),
@@ -92,7 +103,7 @@ export class Ground {
     this.plotMesh = plot;
     this.root.add(plot);
 
-    this.grassMaterial = new THREE.MeshStandardMaterial({ color: colorOf('slateLight'), roughness: 0.9, metalness: 0 });
+    this.grassMaterial = new THREE.MeshStandardMaterial({ color: colorOf('grass'), roughness: 0.9, metalness: 0 });
     const blade = new THREE.ConeGeometry(0.03, 0.18, 4).translate(0, 0.09, 0);
     this.grass = new THREE.InstancedMesh(blade, this.grassMaterial, GRASS_COUNT);
     this.grass.name = 'grass';
@@ -100,6 +111,11 @@ export class Ground {
     this.scatterGrass();
     this.bladeMatrices = new Float32Array(this.grass.instanceMatrix.array);
     this.root.add(this.grass);
+    if (sign) {
+      const lawnBlades = new THREE.MeshStandardMaterial({ roughness: 0.9, metalness: 0 });
+      lawnBlades.color = this.lawnColor;
+      this.root.add(createLawnBlades(blade, lawnBlades));
+    }
 
     this.root.add(createDepot());
 
@@ -153,7 +169,7 @@ export class Ground {
       else array.set(this.bladeMatrices.subarray(i * 16, i * 16 + 16), i * 16);
     }
     this.grass.instanceMatrix.needsUpdate = true;
-    this.plotTopMaterial.color.copy(colorOf(prepared ? 'slatePale' : this.grassToken()));
+    this.plotTopMaterial.color.copy(colorOf(prepared ? 'slatePale' : 'grass'));
   }
 
   /**
@@ -188,20 +204,21 @@ export class Ground {
     this.partial = true;
     // The roads and laydown go down once the plot is cleared.
     this.yard?.setWorked(t >= 0.999);
-    this.plotTopMaterial.color.copy(colorOf(this.grassToken())).lerp(colorOf('slatePale'), t);
-  }
-
-  setPaletteMode(mode: PaletteMode): void {
-    this.palette = mode;
-    this.grassMaterial.color.copy(colorOf(this.grassToken()));
-    if (!this.prepared) this.plotTopMaterial.color.copy(colorOf(this.grassToken()));
+    this.plotTopMaterial.color.copy(colorOf('grass')).lerp(colorOf('slatePale'), t);
   }
 
   setTheme(theme: Theme): void {
     this.groundMaterial.color.copy(Ground.groundFor(theme));
+    this.lawnColor.copy(Ground.lawnFor(theme));
   }
 
-  /** The ground plane color for a theme (spec 5.8). */
+  /** The lawn's color for a theme: grass, darkened on the dark theme. */
+  static lawnFor(theme: Theme): THREE.Color {
+    const grass = colorOf('grass');
+    return theme === 'dark' ? grass.lerp(colorOf('slateDark'), NIGHT_LAWN_SHARE) : grass;
+  }
+
+  /** The ground plane color for a theme, past the lawn (spec 5.8). */
   static groundFor(theme: Theme): THREE.Color {
     return colorOf(theme === 'dark' ? 'slateDark' : 'white');
   }
@@ -219,10 +236,87 @@ export class Ground {
   setDate(date: IsoDate): void {
     this.sign?.setText(formatDateTitle(date));
   }
+}
 
-  private grassToken(): 'slateLight' | 'grass' {
-    return this.palette === 'accents' ? 'grass' : 'slateLight';
+/** How far a ground point lies outside the fence: 0 inside it. */
+function outsideFence(x: number, z: number): number {
+  let nearest = Infinity;
+  for (const [minX, minZ, maxX, maxZ] of FENCED) {
+    const dx = Math.max(minX - x, 0, x - maxX);
+    const dz = Math.max(minZ - z, 0, z - maxZ);
+    nearest = Math.min(nearest, Math.hypot(dx, dz));
   }
+  return nearest;
+}
+
+/**
+ * The ground plane's material. Its color is the theme's ground, which theme
+ * changes tween; the shader lays the lawn over it by distance from the fence,
+ * so the lawn fades into that ground whatever the theme.
+ */
+function lawnMaterial(lawnColor: THREE.Color): THREE.MeshStandardMaterial {
+  const material = new THREE.MeshStandardMaterial({ color: colorOf('white'), roughness: 1, metalness: 0 });
+  const bounds = FENCED.reduce(
+    (box, [minX, minZ, maxX, maxZ]) => box.set(Math.min(box.x, minX), Math.min(box.y, minZ), Math.max(box.z, maxX), Math.max(box.w, maxZ)),
+    new THREE.Vector4(Infinity, Infinity, -Infinity, -Infinity),
+  );
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.lawnColor = { value: lawnColor };
+    shader.uniforms.lawnBounds = { value: bounds };
+    shader.uniforms.lawnFade = { value: new THREE.Vector2(LAWN_FADE_START, LAWN_FADE_END) };
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>
+      varying vec2 vLawnXZ;`)
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+      vLawnXZ = ( modelMatrix * vec4( transformed, 1.0 ) ).xz;`);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>
+      varying vec2 vLawnXZ;
+      uniform vec3 lawnColor;
+      uniform vec4 lawnBounds;
+      uniform vec2 lawnFade;`)
+      .replace('#include <color_fragment>', `#include <color_fragment>
+      vec2 lawnOut = max( max( lawnBounds.xy - vLawnXZ, vLawnXZ - lawnBounds.zw ), 0.0 );
+      diffuseColor.rgb = mix( lawnColor, diffuseColor.rgb, smoothstep( lawnFade.x, lawnFade.y, length( lawnOut ) ) );`);
+  };
+  material.customProgramCacheKey = () => 'lawn-ground';
+  return material;
+}
+
+/** Blades in the lawn round the fence, thickest by it, and kept off the street and the way in. */
+function createLawnBlades(blade: THREE.BufferGeometry, material: THREE.Material): THREE.InstancedMesh {
+  const lawn = new THREE.InstancedMesh(blade, material, LAWN_BLADE_COUNT);
+  lawn.name = 'lawn';
+  lawn.receiveShadow = true;
+  const rng = mulberry32(hashString('lawn-grass'));
+  const matrix = new THREE.Matrix4();
+  const position = new THREE.Vector3();
+  const rotation = new THREE.Quaternion();
+  const tilt = new THREE.Euler();
+  const scale = new THREE.Vector3();
+  const reach = LAWN_BLADE_REACH;
+  const minX = Math.min(...FENCED.map((r) => r[0])) - reach;
+  const minZ = Math.min(...FENCED.map((r) => r[1])) - reach;
+  const maxX = Math.max(...FENCED.map((r) => r[2])) + reach;
+  const maxZ = Math.max(...FENCED.map((r) => r[3])) + reach;
+  let placed = 0;
+  while (placed < LAWN_BLADE_COUNT) {
+    const x = randomRange(rng, minX, maxX);
+    const z = randomRange(rng, minZ, maxZ);
+    const out = outsideFence(x, z);
+    // Clear of the fence feet, and thinning with distance.
+    if (out < 0.1 || rng() > (1 - out / reach) ** 2) continue;
+    if (Math.abs(z - ROAD_Z) < ROAD_WIDTH / 2 + 0.1) continue;
+    // The ramp and the cones at the gate.
+    if (x > GATE.from - 0.6 && x < GATE.to + 0.6 && z > GATE.z && z < ROAD_Z) continue;
+    position.set(x, GROUND_Y, z);
+    tilt.set(randomRange(rng, -0.25, 0.25), rng() * Math.PI * 2, randomRange(rng, -0.25, 0.25));
+    rotation.setFromEuler(tilt);
+    scale.set(1, randomRange(rng, 0.7, 1.3), 1);
+    lawn.setMatrixAt(placed++, matrix.compose(position, rotation, scale));
+  }
+  lawn.instanceMatrix.needsUpdate = true;
+  return lawn;
 }
 
 /** The pad beside the plot where machines park between jobs. */
