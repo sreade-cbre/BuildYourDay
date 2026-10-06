@@ -985,3 +985,11 @@ what was decided and why. Section numbers refer to `TIME_TOWER_SPEC.md`.
     against 2.8 ms without the lawn at a pixel ratio of 1, and 7.2 ms
     against 4.4 ms at 2, 95th percentile 8.7 ms. No console errors in
     either theme.
+44. **More pronounced blades (your request, October 6, 2026: "make the
+    blades of grass a little more pronounced").** The blades are about a
+    fifth taller, 0.16 to 0.27 units before each tuft's own sizing, and a
+    quarter wider at the root, and the ground between the tufts is a
+    little darker, 55% of the blades' color rather than 62%, so they show
+    more against it. Same count and triangles as decision 43; a mid build
+    frame at a pixel ratio of 2 costs 2.4 ms more with the lawn than
+    without, about what it did.

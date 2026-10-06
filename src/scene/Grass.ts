@@ -19,12 +19,12 @@ const LAWN_FADE_END = 45;
 /** Tufts to the square unit where the grass is full. */
 const TUFT_DENSITY = 16;
 const TUFT_BLADES = 6;
-const BLADE_RADIUS = 0.016;
+const BLADE_RADIUS = 0.02;
 /** A blade's shade at its root and at its tip, as multiples of its color. */
 const ROOT_SHADE = 0.5;
 const TIP_SHADE = 1.0;
 /** The ground between the tufts, as a share of the blades' color. */
-const TURF_SHADE = 0.62;
+const TURF_SHADE = 0.55;
 /** How much lighter or darker the lawn's patches make it, either way. */
 const PATCH_DEPTH = 0.12;
 
@@ -169,7 +169,7 @@ function tuftGeometry(): THREE.BufferGeometry {
       normals.push(normal.x, normal.y, normal.z);
       colors.push(ROOT_SHADE, ROOT_SHADE, ROOT_SHADE);
     }
-    positions.push(root.x + out.x * lean, randomRange(rng, 0.13, 0.22), root.y + out.y * lean);
+    positions.push(root.x + out.x * lean, randomRange(rng, 0.16, 0.27), root.y + out.y * lean);
     normals.push(0, 1, 0);
     colors.push(TIP_SHADE, TIP_SHADE, TIP_SHADE);
     // Each side runs from two root corners to the tip, wound to face out.
