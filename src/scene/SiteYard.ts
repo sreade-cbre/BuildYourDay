@@ -31,8 +31,8 @@ export const FENCED: ReadonlyArray<readonly [number, number, number, number]> = 
 export const ROAD_Z = 6.6;
 export const ROAD_WIDTH = 1.4;
 export const RAMP = { start: 4.0, end: 5.2 };
-/** The street runs the width of the ground, out into the haze both ways. */
-const ROAD_LENGTH = 200;
+/** The street runs the width of the ground (GROUND_SIZE in Ground.ts), out into the haze both ways. */
+const ROAD_LENGTH = 4000;
 
 const unitBox = new THREE.BoxGeometry(1, 1, 1);
 const unitCylinder = new THREE.CylinderGeometry(0.5, 0.5, 1, 12);

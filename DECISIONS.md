@@ -960,3 +960,28 @@ what was decided and why. Section numbers refer to `TIME_TOWER_SPEC.md`.
     as the view zooms past it, the camera's far plane grows with the zoom
     limit, and the ground plane is now 4,000 units across, so its edge
     never shows.
+
+### Detailed grass
+
+42. **Blades everywhere it is green (your request, October 6, 2026: "make
+    the grass more detailed with more visible blades of grass everywhere it
+    is green").** The cones of spec 8.2, and the 6,000 blades by the fence
+    under "Grass round the site", are now tufts, built in
+    `src/scene/Grass.ts`: six thin three sided blades leaning out from a
+    root, dark at the root and light at the tip, each tuft turned, sized,
+    and shaded its own way, a little warmer or cooler. They stand about 16 to the square unit wherever the grass is
+    full, on the plot and across the whole lawn, about 1,550 on the plot
+    and 55,000 in the lawn. As the lawn fades they thin out, shrink, and
+    fade into the ground's color with it, so none stand out on the pale
+    ground past it. The ground between them is darker than the blades, 62%
+    of their color, so they show against it, and lighter and darker patches
+    from a few units to about ten across run through the lawn's ground and
+    its tufts alike. The bulldozer clears the plot tuft by tuft as it did
+    blade by blade. The street is now 4,000 units long, as wide as the
+    ground the free view brought in.
+43. **Measured.** About a million triangles in one draw call for the lawn
+    and one for the plot, casting no shadows. In headless Chrome at 1600 ×
+    1000 with the GPU finishing each frame, a mid build frame takes 5.1 ms
+    against 2.8 ms without the lawn at a pixel ratio of 1, and 7.2 ms
+    against 4.4 ms at 2, 95th percentile 8.7 ms. No console errors in
+    either theme.
