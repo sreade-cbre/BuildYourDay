@@ -1,13 +1,14 @@
 import { LIMITS } from '../core/defaults';
 import { defaultNewRange, totals } from '../core/layout';
 import { PERSIST_MESSAGES } from '../core/persist';
-import type { Store } from '../core/store';
+import { isMeetingBlock, type Store } from '../core/store';
 import { addDays, formatDateTitle, formatDuration } from '../core/time';
 import { button, h, iconButton } from './dom';
 
 // The top bar and the small fixed pieces of the overlay (spec section 13.1):
 // day navigation, totals, Add block, the menu, settings, plus the list view
-// button that appears on focus and the storage warning chip.
+// button that appears on focus, the storage warning chip, and the chip that
+// says when Outlook needs the user to keep meetings up to date.
 
 export interface OverlayActions {
   previousDay(): void;
@@ -27,6 +28,12 @@ export interface OverlayActions {
 
 export const DAY_FULL_MESSAGE = 'The day is full.';
 
+/** A problem with the Outlook connection that needs the user. */
+export interface OutlookAlert {
+  text: string;
+  action: { label: string; run: () => void };
+}
+
 export class Overlay {
   readonly root: HTMLElement;
   private readonly dateTitle: HTMLHeadingElement;
@@ -40,6 +47,10 @@ export class Overlay {
   private readonly storageChip: HTMLElement;
   private readonly statusChip: HTMLElement;
   private readonly statusText: HTMLElement;
+  private readonly outlookChip: HTMLElement;
+  private readonly outlookText: HTMLElement;
+  private readonly outlookAction: HTMLButtonElement;
+  private outlookRun: (() => void) | null = null;
   private readonly unsubscribe: () => void;
 
   constructor(
@@ -120,7 +131,11 @@ export class Overlay {
       button('Skip', 'button button--link', () => actions.skip()),
     );
     this.statusChip.hidden = true;
-    host.append(listButton, bar, this.storageChip, this.statusChip);
+    this.outlookText = h('span', { class: 'chip__text' });
+    this.outlookAction = button('', 'button button--link', () => this.outlookRun?.());
+    this.outlookChip = h('div', { class: 'chip chip--status chip--outlook', attrs: { role: 'status' } }, this.outlookText, this.outlookAction);
+    this.outlookChip.hidden = true;
+    host.append(listButton, bar, this.storageChip, this.statusChip, this.outlookChip);
 
     document.addEventListener('pointerdown', this.onDocumentPointer, true);
     this.unsubscribe = store.subscribe(() => this.render());
@@ -197,6 +212,15 @@ export class Overlay {
     this.storageChip.hidden = !visible;
   }
 
+  /** Shows what Outlook needs, or hides the chip with null. */
+  setOutlookAlert(alert: OutlookAlert | null): void {
+    this.outlookChip.hidden = alert === null;
+    this.outlookRun = alert?.action.run ?? null;
+    if (!alert) return;
+    this.outlookText.textContent = alert.text;
+    this.outlookAction.textContent = alert.action.label;
+  }
+
   /** Shows what is being built, or hides the chip with null. */
   setStatus(label: string | null): void {
     this.statusChip.hidden = !label;
@@ -222,11 +246,16 @@ export class Overlay {
     this.copyItem.textContent = previous && previous !== yesterday
       ? `Copy blocks from ${formatDateTitle(previous)}`
       : "Copy yesterday's blocks";
+    // Meetings from Outlook are not the user's to copy over or clear.
+    const own = blocks.filter((b) => !isMeetingBlock(b)).length;
     setDisabled(
       this.copyItem,
-      blocks.length > 0 ? 'This day already has blocks.' : previous === null ? 'No earlier day has blocks.' : null,
+      own > 0 ? 'This day already has blocks.' : previous === null ? 'No earlier day has blocks.' : null,
     );
-    setDisabled(this.clearItem, blocks.length === 0 ? 'This day has no blocks.' : null);
+    setDisabled(
+      this.clearItem,
+      blocks.length === 0 ? 'This day has no blocks.' : own === 0 ? 'Meetings from Outlook stay, so there is nothing else to clear.' : null,
+    );
   }
 
   dispose(): void {

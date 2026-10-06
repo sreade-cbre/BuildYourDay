@@ -16,6 +16,7 @@ time order, with free time shown as hollow wireframe. The full design lives in
 | M4 | Stacked builds and the other jobs | Done |
 | M5 | Living tower: now ring, weathering, idle orbit | Done |
 | After M5 | Blocks build in real time, while their time runs | Done |
+| After M5 | Meetings from Outlook, kept up to date | Done; needs an app registration to connect |
 
 ## Requirements
 
@@ -44,7 +45,9 @@ plans.
 | `npm run test:watch` | Runs the unit tests on every change. |
 | `npm run typecheck` | Type checks without building. |
 
-The build has no network calls and no web fonts, so it works offline.
+The build has no network calls and no web fonts, so it works offline. The
+one exception is Outlook: once you connect it, the app talks to Microsoft
+sign-in and Microsoft Graph (see [Meetings from Outlook](#meetings-from-outlook)).
 
 ## Using it
 
@@ -172,16 +175,80 @@ and Cancel puts everything back.
 | Weather past blocks | On today, blocks that are done fade to a paler, matte finish. |
 | Theme | Light or Dark. |
 | Palette mode | Strict brand colors (default), or Accents, which adds hi-vis orange for worker vests and site cones. Grass is green in either mode. |
+| Outlook calendar | Connect, Update now, the category for meetings, and Disconnect. These act at once; Save and Cancel do not apply to them. |
 | Data | Export JSON, Import JSON, Clear this day, Clear all data (type clear to confirm). |
+
+## Meetings from Outlook
+
+Time Tower can show the meetings in your Outlook calendar, Teams meetings
+included, as blocks on the tower, and keep them up to date while it is open.
+
+### Setup, once
+
+1. In the Microsoft Entra admin center (entra.microsoft.com), go to
+   Applications, App registrations, New registration. Name it Time Tower,
+   choose accounts in this organizational directory only, and add a
+   redirect URI with the platform **Single-page application** and the
+   address `http://localhost:5173/`.
+2. Under API permissions, add Microsoft Graph, Delegated permissions,
+   `Calendars.Read`. If it says admin consent is required, an admin of your
+   organization needs to grant it.
+3. From the Overview page, copy the Application (client) ID and the
+   Directory (tenant) ID.
+4. In Time Tower, open Settings, paste both under Outlook calendar, and
+   choose Connect Outlook. You sign in with Microsoft and come straight back.
+
+The ids can also go in a `.env.local` file at the repo root, which git
+ignores, so the fields arrive filled in. Restart `npm run dev` after adding
+it.
+
+```sh
+VITE_OUTLOOK_CLIENT_ID=00000000-0000-0000-0000-000000000000
+VITE_OUTLOOK_TENANT_ID=00000000-0000-0000-0000-000000000000
+```
+
+### How it works
+
+- The day you are viewing is read from Outlook when the app opens, every 5
+  minutes, when you come back to the tab, and when you change days. Update
+  now in Settings reads it at once.
+- New meetings appear as blocks in the Meetings category (pick another
+  under Meetings go in). Moved, renamed, canceled, and declined meetings
+  follow. All day events, declined meetings, and events marked free or
+  working elsewhere are left out.
+- Times snap to the slot grid: a meeting from 10:05 to 10:25 fills 10:00 to
+  10:30, or the slots fully inside it if that would run into something.
+- Your own blocks never move. A meeting that would overlap one stays off
+  the tower and a toast says so; meetings you accepted claim their time
+  before tentative ones, then unanswered invites. Free the time and the
+  meeting appears at once. Settings lists what is not on the tower and why,
+  including meetings outside the day window.
+- Outlook owns a meeting's time and title, so the inspector and list view
+  show them read only, and a meeting cannot be dragged, moved, or
+  demolished: change it in Outlook. Its color is yours to pick. Clear this
+  day leaves meetings in place, and copying a day copies only your own
+  blocks, around the meetings already there.
+- Meetings build in real time, like any block.
+- Sign-in lasts 24 hours, a Microsoft limit for browser apps. When it runs
+  out as the app opens, the app signs in again without asking if your
+  browser is still signed in to Microsoft 365; otherwise an "Outlook sign-in
+  has expired" chip offers Reconnect.
+- Disconnect, in Settings, asks whether to keep the meetings as your own
+  blocks or remove them.
+- Time Tower asks only to read your calendar. The sign-in stays in this
+  browser under `timetower.outlook`, apart from your plans, so Export never
+  includes it. Meetings are fetched only while the app is open; there is no
+  server.
 
 ## Project layout
 
 ```
 src/
   brand/tokens.ts   the only file allowed to contain hex colors
-  core/             pure logic: model, time, layout, store, rng, build progress by the clock (no three, no DOM)
+  core/             pure logic: model, time, layout, store, rng, build progress by the clock, meeting placement (no three, no DOM)
   scene/            three.js scene: SceneRoot, Ground, the site yard, Tower, blocks, gaps, labels, now ring
   scene/crew/       workers, machines, crane, hoist, scaffold, rubble, dust, and site props
+  outlook/          Microsoft sign-in (OAuth with PKCE), the Graph calendar reader, and the sync that keeps meetings current
   ui/               HTML overlay
   anim/             Timeline, Director, easing, paths, the job planner (plan.ts), and the block under way (live.ts, liveBuild.ts, sitePlan.ts)
   anim/jobs/        build, extend, shrink, resize, demolish, relocate, settle, vanish, the speed preview, and their timing (schedule.ts)

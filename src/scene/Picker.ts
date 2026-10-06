@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { nearestFreeStart, resizeLimits, yToMinutes } from '../core/layout';
 import type { BlockId, TimeRange } from '../core/model';
-import type { Store } from '../core/store';
+import { isMeetingBlock, type Store } from '../core/store';
 import { ceilToSlot, clamp, floorToSlot } from '../core/time';
 import type { Ground } from './Ground';
 import type { SceneRoot } from './SceneRoot';
@@ -214,7 +214,8 @@ export class Picker {
     });
     let cursor = '';
     if (target?.kind === 'block') {
-      const selected = this.handlers.selectedId() === target.id;
+      const block = this.store.findBlock(this.store.viewedDate, target.id);
+      const selected = this.handlers.selectedId() === target.id && block !== undefined && !isMeetingBlock(block);
       if (selected && (target.zone === 'roof' || target.zone === 'base') && !(target.topFace && target.id === this.tower.topBlockId)) {
         cursor = 'ns-resize';
       } else if (selected && target.zone === 'body') {
@@ -234,6 +235,8 @@ export class Picker {
     const block = this.store.findBlock(this.store.viewedDate, press.id);
     if (!block) return;
     if (!press.wasSelected) this.handlers.select(press.id);
+    // Outlook owns a meeting's time, so a drag on one only selects it.
+    if (isMeetingBlock(block)) return;
     const kind =
       press.wasSelected && press.zone === 'roof' ? 'resize-top'
       : press.wasSelected && press.zone === 'base' ? 'resize-base'

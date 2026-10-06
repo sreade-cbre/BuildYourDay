@@ -20,10 +20,11 @@ import {
   parseImport,
   readSave,
   serializeExport,
+  usableStorage,
   type StorageLike,
 } from './core/persist';
 import { nextChange, type Clock } from './core/progress';
-import { MESSAGES, Store, type BlockPatch, type StoreEvent } from './core/store';
+import { MESSAGES, Store, isMeetingBlock, type BlockPatch, type StoreEvent } from './core/store';
 import { addDays, ceilToSlot, clamp, floorToSlot, formatDateTitle, formatDurationLong, formatTimeShort, nowMinutes, todayIso } from './core/time';
 import { Crew } from './scene/crew/Crew';
 import { LiveKit } from './scene/crew/LiveKit';
@@ -33,6 +34,7 @@ import { materials } from './scene/materials';
 import { Picker } from './scene/Picker';
 import { DEFAULT_AZIMUTH, SceneRoot } from './scene/SceneRoot';
 import { NowRing } from './scene/NowRing';
+import { OutlookSync } from './outlook/OutlookSync';
 import { Tower } from './scene/Tower';
 import { DebugPanel } from './ui/DebugPanel';
 import { Dialog, choose } from './ui/Dialog';
@@ -40,7 +42,7 @@ import { h } from './ui/dom';
 import { Inspector } from './ui/Inspector';
 import { Legend } from './ui/Legend';
 import { ListView, type ListActions } from './ui/ListView';
-import { DAY_FULL_MESSAGE, Overlay } from './ui/Overlay';
+import { DAY_FULL_MESSAGE, Overlay, type OutlookAlert } from './ui/Overlay';
 import { SettingsModal } from './ui/SettingsModal';
 import { installShortcuts } from './ui/shortcuts';
 import { UiState, type BlockDraftState, type UiSnapshot } from './ui/state';
@@ -97,6 +99,8 @@ export class App {
   readonly overlay: Overlay;
   readonly inspector: Inspector;
   readonly toasts: Toasts;
+  /** Meetings from the user's Outlook calendar, once connected. */
+  readonly outlook: OutlookSync;
   private readonly saver: Saver;
   private readonly overlayHost: HTMLElement;
   private readonly debug: DebugPanel | null;
@@ -111,6 +115,8 @@ export class App {
   private today = todayIso();
   private boundaryTimer = 0;
   private lastInput = performance.now();
+  /** Whether the user has clicked, typed, or scrolled since the page opened. */
+  private touched = false;
   private sideGround: Ground | null = null;
 
   constructor(hosts: AppHosts, storage: StorageLike | null) {
@@ -161,6 +167,16 @@ export class App {
       close: () => this.select(null),
     });
     new Legend(hosts.overlay, this.store, this.ui, (id) => this.toggleHighlight(id));
+    for (const type of ['pointerdown', 'keydown', 'wheel']) {
+      window.addEventListener(type, () => (this.touched = true), { capture: true, passive: true });
+    }
+    this.outlook = new OutlookSync(this.store, storage, usableStorage(() => window.sessionStorage), {
+      notify: (message, action) => this.toasts.show(message, action ? { action } : {}),
+      showDetails: () => this.openSettings(),
+      untouched: () => !this.touched && Dialog.openCount === 0,
+    });
+    this.outlook.subscribe(() => this.overlay.setOutlookAlert(this.outlookAlert()));
+    this.overlay.setOutlookAlert(this.outlookAlert());
     this.debug = this.scene ? new DebugPanel(hosts.overlay) : null;
 
     this.fileInput = h('input', { class: 'visually-hidden', attrs: { type: 'file', accept: 'application/json,.json', tabindex: '-1', 'aria-hidden': 'true' } });
@@ -773,19 +789,48 @@ export class App {
     this.store.setViewedDate(todayIso());
   }
 
+  /** Clears the user's own blocks; meetings from Outlook stay. */
   private clearDay(): void {
-    const count = this.store.blocks.length;
-    if (count === 0) return;
-    this.store.clearDay(this.store.viewedDate);
+    const result = this.store.clearDay(this.store.viewedDate);
+    if (!result.ok || result.value === 0) return;
     this.select(null);
-    this.toasts.show(`Cleared ${plural(count, 'block', 'blocks')}.`, { action: { label: 'Undo', run: () => this.undo() } });
+    this.toasts.show(`Cleared ${plural(result.value, 'block', 'blocks')}.`, { action: { label: 'Undo', run: () => this.undo() } });
   }
 
   private copyPrevious(): void {
     const from = this.store.previousPlannedDate(this.store.viewedDate);
-    if (!from || this.store.blocks.length > 0) return;
+    if (!from || this.store.blocks.some((b) => !isMeetingBlock(b))) return;
     const result = this.store.copyDay(from, this.store.viewedDate);
-    this.toasts.show(result.ok ? `Copied ${plural(result.value.length, 'block', 'blocks')} from ${formatDateTitle(from)}.` : result.error);
+    if (!result.ok) {
+      this.toasts.show(result.error);
+      return;
+    }
+    const copied = `Copied ${plural(result.value.length, 'block', 'blocks')} from ${formatDateTitle(from)}.`;
+    const left = this.store.blocksFor(from).filter((b) => !isMeetingBlock(b)).length - result.value.length;
+    this.toasts.show(left > 0 ? `${copied} ${left === 1 ? 'One overlapped a meeting, so it was' : `${left} overlapped meetings, so they were`} left out.` : copied);
+  }
+
+  // Outlook
+
+  /** The chip for an Outlook connection that needs the user, if it does. */
+  private outlookAlert(): OutlookAlert | null {
+    const { connection, problem, needsUser } = this.outlook.status;
+    if (connection === 'expired') {
+      return {
+        text: 'Outlook sign-in has expired',
+        action: {
+          label: 'Reconnect',
+          run: () =>
+            void this.outlook.connect().then((error) => {
+              if (error) this.toasts.show(error);
+            }),
+        },
+      };
+    }
+    if (connection === 'on' && problem && needsUser) {
+      return { text: 'Meetings from Outlook are not updating', action: { label: 'Details', run: () => this.openSettings() } };
+    }
+    return null;
   }
 
   private loadSample(): void {
@@ -869,7 +914,7 @@ export class App {
       clearAll: () => this.clearAll(),
       saved: () => this.toasts.show('Settings saved.'),
       previewSpeed: this.scene ? () => this.previewSpeed() : undefined,
-    });
+    }, this.outlook);
   }
 
   /**

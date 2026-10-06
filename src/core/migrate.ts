@@ -22,6 +22,11 @@ import { clamp, isIsoDate } from './time';
 // Its blocks are clamped to the day window because they carry no window of
 // their own. Version 1 saves keep blocks outside the current window, because
 // section 6 keeps such blocks so that changing the window back restores them.
+//
+// A block's optional eventId, which links a meeting to its Outlook event,
+// arrived after version 1 without a new version: a file without it reads as
+// before, and an older app reading a newer file keeps the meeting as an
+// ordinary block.
 
 export type MigrateResult =
   | { ok: true; save: SaveFile; changes: string[] }
@@ -39,6 +44,8 @@ export interface MigrateOptions {
 /** The finest slot. Every repaired time lands on this grid. */
 const GRID = 5;
 const DAY_MINUTES = 1440;
+/** Longest Outlook event id kept; Graph's run to about 150 characters. */
+const MAX_EVENT_ID = 1024;
 
 type Raw = Record<string, unknown>;
 
@@ -271,7 +278,14 @@ function repairBlocks(
       categoryId = fallback;
     }
     const createdAt = finiteNumber(entry.createdAt) ?? context.now();
-    candidates.push({ id: id as string, title, start, end, categoryId: categoryId as string, createdAt });
+    const block: Block = { id: id as string, title, start, end, categoryId: categoryId as string, createdAt };
+    const eventId = entry.eventId;
+    if (typeof eventId === 'string' && eventId !== '' && eventId.length <= MAX_EVENT_ID) {
+      block.eventId = eventId;
+    } else if (eventId !== undefined) {
+      context.changes.push(`Made ${label} an ordinary block: its Outlook event id was invalid.`);
+    }
+    candidates.push(block);
   });
 
   candidates.sort((a, b) => a.start - b.start || a.end - b.end);

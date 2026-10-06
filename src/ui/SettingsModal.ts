@@ -2,8 +2,10 @@ import { LIMITS } from '../core/defaults';
 import { SLOT_SIZES, SWATCH_TOKENS, type Category, type Settings, type SwatchToken } from '../core/model';
 import type { Store } from '../core/store';
 import { formatTime } from '../core/time';
+import type { OutlookSync } from '../outlook/OutlookSync';
 import { Dialog } from './Dialog';
 import { button, h } from './dom';
+import { OutlookSection } from './OutlookSection';
 import { setDisabled } from './Overlay';
 
 // The settings modal (spec sections 13.6 and 14). Every change previews live
@@ -43,17 +45,20 @@ export class SettingsModal {
   private readonly previewButton: HTMLButtonElement;
   /** A category waiting for its removal to be confirmed. */
   private confirmingRemoval: string | null = null;
+  private readonly outlookSection: OutlookSection | null;
 
   constructor(
     host: HTMLElement,
     private readonly store: Store,
     private readonly actions: SettingsActions,
+    outlook: OutlookSync | null = null,
   ) {
     this.draft = structuredClone(store.savedSettings) as Settings;
     this.dialog = new Dialog(host, {
       title: 'Settings',
       className: 'dialog--settings',
       onDismiss: () => this.cancel(),
+      onClose: () => this.outlookSection?.dispose(),
     });
     this.error = h('p', { class: 'form-error', attrs: { role: 'alert' } });
     this.error.hidden = true;
@@ -150,7 +155,9 @@ export class SettingsModal {
       ),
     );
 
-    this.dialog.body.append(day, categories, motion, display, data, this.error);
+    // Meetings from Outlook act at once, like the data buttons.
+    this.outlookSection = outlook ? new OutlookSection(outlook, store) : null;
+    this.dialog.body.append(day, categories, motion, display, this.outlookSection?.element ?? '', data, this.error);
     this.dialog.footer.append(
       button('Cancel', 'button', () => this.cancel()),
       button('Save', 'button button--primary', () => this.save()),

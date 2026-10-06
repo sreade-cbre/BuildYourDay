@@ -30,6 +30,11 @@ export interface Block {
   end: number;             // minutes from midnight, > start, multiple of slot
   categoryId: CategoryId;
   createdAt: number;       // epoch ms
+  /**
+   * The Outlook event this block shows, for a meeting synced from the
+   * calendar. Outlook owns its time and title; absent on the user's own blocks.
+   */
+  eventId?: string;
 }
 
 export type SlotMinutes = 5 | 10 | 15 | 30;

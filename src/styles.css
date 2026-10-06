@@ -988,3 +988,77 @@ h3 {
   font-family: var(--font-body);
   font-size: 12px;
 }
+
+/* Outlook calendar */
+
+.chip--outlook {
+  top: 92px;
+  bottom: auto;
+  border-color: var(--navy);
+}
+
+/* Below the storage chip when both are up. */
+.chip--top:not([hidden]) ~ .chip--outlook {
+  top: 128px;
+}
+
+:root[data-theme='dark'] .chip--outlook {
+  border-color: var(--blueLight);
+}
+
+.outlook__about {
+  margin: 0 0 10px;
+}
+
+.outlook__status {
+  margin: 0 0 4px;
+  color: var(--heading);
+  font-size: 13px;
+}
+
+.outlook__status + .field-note,
+.outlook__status + .outlook__problem {
+  margin-bottom: 10px;
+}
+
+.outlook__problem,
+.inspector__note {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--blue);
+  background: var(--hover-bg);
+  font-size: 12px;
+}
+
+.inspector__note {
+  margin-bottom: 14px;
+}
+
+.outlook__uri {
+  font-family: var(--font-body);
+  font-weight: bold;
+  user-select: all;
+}
+
+.outlook__skipped-title {
+  margin: 4px 0;
+  font-size: 12px;
+  font-weight: bold;
+}
+
+.outlook__skipped {
+  margin: 0 0 10px;
+  padding-left: 18px;
+  font-size: 12px;
+}
+
+.list-table__note {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  font-style: italic;
+}
+
+.inspector__title[readonly] {
+  cursor: default;
+}

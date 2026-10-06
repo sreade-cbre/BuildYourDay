@@ -1,6 +1,6 @@
 import { isInWindow } from '../core/layout';
 import type { BlockId, TimeRange } from '../core/model';
-import type { BlockPatch, Store } from '../core/store';
+import { isMeetingBlock, MESSAGES, type BlockPatch, type Store } from '../core/store';
 import { formatDuration } from '../core/time';
 import { button, h, iconButton } from './dom';
 import { setDisabled } from './Overlay';
@@ -11,6 +11,8 @@ import { draftEndFor, editTimeOptions, fillTimeSelect, newTimeOptions } from './
 // Times are selects of slot-aligned times that already respect neighbors, so
 // an edit can only stop at a neighbor, never push it (fixed times). Title and
 // time edits commit on blur or Enter; time edits preview in the tower first.
+// A meeting from Outlook shows its time and title without letting them
+// change, since Outlook owns them; its color is the user's to pick.
 
 export interface InspectorActions {
   /** Creates the drafted block. Returns an error to show, or null. */
@@ -24,6 +26,9 @@ export interface InspectorActions {
   demolish(id: BlockId): void;
   close(): void;
 }
+
+export const MEETING_NOTE =
+  'From your Outlook calendar. Change or cancel it in Outlook and it updates here within 5 minutes. Its color is yours to pick.';
 
 export const OUTSIDE_WINDOW_WARNING =
   'This block is outside the day window, so move it inside or widen the window in settings.';
@@ -40,6 +45,7 @@ export class Inspector {
   private readonly earlierButton: HTMLButtonElement;
   private readonly laterButton: HTMLButtonElement;
   private readonly warning: HTMLElement;
+  private readonly meetingNote: HTMLElement;
   private readonly error: HTMLElement;
   private readonly footer: HTMLElement;
   private readonly demolishButton: HTMLButtonElement;
@@ -70,9 +76,10 @@ export class Inspector {
     this.laterButton = button('Move later', 'button', () => this.nudge(1));
     this.moves = h('div', { class: 'inspector__moves' }, this.earlierButton, this.laterButton);
     this.warning = h('p', { class: 'inspector__warning', text: OUTSIDE_WINDOW_WARNING });
+    this.meetingNote = h('p', { class: 'inspector__note', text: MEETING_NOTE });
     this.error = h('p', { class: 'inspector__error', attrs: { role: 'alert' } });
     this.demolishButton = button('Demolish', 'button button--quiet', () => {
-      if (this.shown.mode === 'edit') this.actions.demolish(this.shown.id);
+      if (this.shown.mode === 'edit' && this.demolishButton.getAttribute('aria-disabled') !== 'true') this.actions.demolish(this.shown.id);
     });
     this.cancelButton = button('Cancel', 'button', () => this.actions.close());
     this.buildButton = button('Build', 'button button--primary', () => this.build());
@@ -82,6 +89,7 @@ export class Inspector {
       'aside',
       { class: 'inspector panel', attrs: { 'aria-labelledby': 'inspector-heading' } },
       h('div', { class: 'inspector__head' }, this.heading, iconButton('close', 'Close inspector', () => this.actions.close())),
+      this.meetingNote,
       h('label', { class: 'field' }, h('span', { class: 'field__label', text: 'Title' }), this.titleInput),
       h(
         'div',
@@ -258,6 +266,7 @@ export class Inspector {
     fillTimeSelect(this.endSelect, ends, draft.end, settings);
     this.duration.textContent = formatDuration(draft.end - draft.start);
     this.renderSwatches(draft.categoryId);
+    this.setMeeting(false);
     this.moves.hidden = true;
     this.warning.hidden = true;
     if (this.footer.firstChild !== this.cancelButton) this.footer.replaceChildren(this.cancelButton, this.buildButton);
@@ -270,7 +279,8 @@ export class Inspector {
       return;
     }
     const settings = this.store.settings;
-    this.heading.textContent = 'Block details';
+    const meeting = isMeetingBlock(block);
+    this.heading.textContent = meeting ? 'Meeting details' : 'Block details';
     if (fresh || document.activeElement !== this.titleInput) this.titleInput.value = block.title;
     const times = this.pending ?? { start: block.start, end: block.end };
     const { starts, ends } = editTimeOptions(this.store.blocks, block, times, settings);
@@ -278,12 +288,22 @@ export class Inspector {
     fillTimeSelect(this.endSelect, ends, times.end, settings);
     this.duration.textContent = formatDuration(times.end - times.start);
     this.renderSwatches(this.store.categoryFor(block).id);
-    this.moves.hidden = false;
+    this.setMeeting(meeting);
+    this.moves.hidden = meeting;
     const date = this.store.viewedDate;
     setDisabled(this.earlierButton, this.store.canNudge(date, id, -1) ? null : 'There is no room to move this block earlier.');
     setDisabled(this.laterButton, this.store.canNudge(date, id, 1) ? null : 'There is no room to move this block later.');
     this.warning.hidden = isInWindow(block, settings);
+    setDisabled(this.demolishButton, meeting ? MESSAGES.meetingDelete : null);
     if (this.footer.firstChild !== this.demolishButton) this.footer.replaceChildren(this.demolishButton);
+  }
+
+  /** Locks the time and title of a meeting from Outlook, and unlocks them for anything else. */
+  private setMeeting(meeting: boolean): void {
+    this.meetingNote.hidden = !meeting;
+    this.titleInput.readOnly = meeting;
+    this.startSelect.disabled = meeting;
+    this.endSelect.disabled = meeting;
   }
 
   private renderSwatches(selectedId: string): void {

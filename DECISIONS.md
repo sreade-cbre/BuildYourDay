@@ -1003,3 +1003,127 @@ what was decided and why. Section numbers refer to `TIME_TOWER_SPEC.md`.
     from the tower, and no higher than the day's tower plus 10, so a pan
     can never lose the site in empty sky. Tried with real drags, pans, and
     zooms: the camera never went below the floor.
+
+## After M5: Meetings from Outlook
+
+On October 6, 2026 the user asked to connect the app to their Microsoft
+Teams calendar and to have it update automatically. They chose Microsoft
+Graph over a published calendar link, and a sign-in written by hand over
+Microsoft's MSAL library, so three stays the only runtime dependency. This
+lifts the spec 2 non-goal of calendar sync and network calls, for Outlook
+only; the app still works offline when it is not connected.
+
+### Sync
+
+1. **The viewed day, while the app is open.** It is fetched when the app
+   opens, every 5 minutes (checked every 30 seconds, skipped while the tab
+   is hidden), on coming back to the tab after a minute or more, when the
+   browser comes back online, and 0.4 seconds after a day change, so paging
+   through days fetches only where it stops. Graph's change notifications
+   need a server, so there are none.
+2. **calendarView in UTC.** `/me/calendarView` from local midnight to local
+   midnight, with `Prefer: outlook.timezone="UTC"`, so Graph expands
+   recurring meetings into occurrences and no time zone table is needed. A
+   reply in any other zone is refused rather than guessed. Pages are
+   followed only on graph.microsoft.com, at most ten, so the token never
+   goes anywhere else.
+3. **Which events are meetings.** Timed events that are not canceled or
+   declined and not marked free or working elsewhere. Tentative ones,
+   unanswered invites, and out of office time are kept, since Outlook shows
+   them as taken. All day events are left out.
+4. **Placing.** Each meeting is clipped to the day window and widened to
+   the slot grid (10:05 to 10:25 fills 10:00 to 10:30); if that runs into
+   something, it takes the slots fully inside its time instead. The user's
+   own blocks never give way (M2 decision 1): a meeting that would overlap
+   one is left off and reported with what is in the way. Between meetings,
+   accepted or organized ones go first, then tentative, then unanswered,
+   then earlier, then longer. A meeting past the 48 block limit is left off
+   too.
+5. **Outlook owns time and title.** The store refuses any other change to a
+   meeting's time or title, refuses to demolish it, and will not swap a
+   block with one by Move earlier or later. The inspector and list view
+   show them read only with a note, and a drag on a meeting only selects
+   it. Its color stays the user's to pick, and a sync keeps it.
+6. **Replanning without a fetch.** The last reply for each day is kept in
+   memory, so the user's own edits, a saved settings change, an import, or
+   Clear all data replan from it at once: free the time and a waiting
+   meeting appears. A settings preview waits for Save or Cancel. The
+   store announces applied meetings as their own change origin,
+   `calendar`, so replanning never loops.
+7. **The category.** Meetings go in the category picked under Meetings go
+   in; by default the one named Meetings, else the default Meetings
+   category by id, else the first. No category is created. Picking another
+   moves the meetings in the old one.
+8. **Clearing and copying.** Clear this day leaves meetings in place and
+   undo restores the rest. Copying a day copies only the user's own blocks,
+   onto a day with none of its own, and leaves out any that would overlap a
+   meeting there; the toast says how many. A day with only meetings is not
+   offered as a copy source.
+9. **Shown at once.** Like imports (real time builds decision 13), synced
+   changes finish whatever is playing and show at once; from then on a
+   meeting builds by the clock like any block.
+10. **Telling the user.** A meeting that overlaps a block, or does not fit a
+    full day, raises a toast once per meeting in a tab, with Show opening
+    Settings, where every meeting not on the tower is listed with its
+    reason. Meetings outside the day window are only listed, since a short
+    window is often on purpose.
+
+### Sign-in
+
+11. **The authorization code flow with PKCE, by hand.** The page goes to
+    Microsoft and comes back with the code in the URL fragment (a redirect,
+    not a popup, which could be blocked). The state is checked against
+    session storage, the challenge is S256, and the code is cleared from
+    the address bar at once. The scopes are `openid profile offline_access`
+    and `Calendars.Read`, read only. The ID token is read only for the
+    name shown in Settings, so its signature is not checked.
+12. **Where the sign-in lives.** `timetower.outlook` in local storage holds
+    the two ids, the category, the account, and the refresh token; the
+    access token stays in memory. It is apart from `timetower.save`, so
+    Export never writes out a sign-in and an import never brings one.
+    Anyone with this browser profile could read the refresh token; it can
+    only read the calendar and lasts 24 hours.
+13. **The 24 hour limit.** Microsoft gives browser apps refresh tokens that
+    end 24 hours after sign-in. When one has run out as the app opens and
+    nothing has been touched yet, the page tries once per tab to sign in
+    again without a prompt (`prompt=none` with the account as a hint),
+    which works while the browser is signed in to Microsoft 365. Otherwise
+    an "Outlook sign-in has expired" chip below the top bar offers
+    Reconnect, and the meetings stay as they were.
+14. **Errors explained.** Common sign-in errors become what to fix: a
+    missing or web platform redirect URI, an unknown client or tenant, and
+    admin consent. A Graph problem that needs the user (401 after a
+    renewed token, 403, 404) shows a "Meetings from Outlook are not
+    updating" chip with Details; anything that a later try may fix, such as
+    being offline, is only noted in Settings.
+15. **The ids.** Typed in Settings, or set as `VITE_OUTLOOK_CLIENT_ID` and
+    `VITE_OUTLOOK_TENANT_ID` in `.env.local`, now ignored by git. The tenant
+    may be its id or the organization's domain. The redirect URI is the
+    page's own address, shown in Settings to copy, so it must be registered
+    for each port the app is served from.
+16. **Clear all data keeps the connection.** It erases plans and settings,
+    but the connection is not plan data, and Disconnect sits right beside
+    it, so meetings come back on the next replan.
+
+### Data
+
+17. **eventId without a new version.** A meeting's block carries an
+    optional `eventId`. Files without one read as before, so no version 2
+    and no migration step; migrate keeps a valid one and turns a broken one
+    into an ordinary block, with a note. An older copy of the app reading a
+    newer file drops the field and keeps the meeting as an ordinary block.
+18. **Disconnect asks.** Keep the meetings as the user's own blocks, which
+    makes them editable everywhere, or remove them.
+
+### Checked
+
+19. **Tests and a full run.** 256 unit tests, 45 of them new, cover placing,
+    the store's rules, reading Graph, PKCE against the RFC 7636 example,
+    the sign-in requests, and the error messages. The whole flow then ran
+    in headless Chrome against the real app, with Microsoft's sign-in and
+    Graph answered through the DevTools protocol: connect, redirect, code
+    redemption, the first sync, conflicts, an edit that frees time, moved,
+    renamed, canceled, and new meetings, a day change, the sign-in
+    running out with the silent try, Reconnect, and Disconnect, 40 checks
+    with no console errors, in both themes. Not yet run against Microsoft
+    itself, which needs the app registration.

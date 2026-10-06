@@ -1,6 +1,6 @@
 import { defaultNewRange, isInWindow } from '../core/layout';
 import type { Block, BlockId, TimeRange } from '../core/model';
-import type { BlockPatch, Store } from '../core/store';
+import { isMeetingBlock, MESSAGES, type BlockPatch, type Store } from '../core/store';
 import { formatDateTitle, formatDuration } from '../core/time';
 import { button, h, iconButton } from './dom';
 import { setDisabled } from './Overlay';
@@ -93,10 +93,12 @@ export class ListView {
     const settings = this.store.settings;
     const date = this.store.viewedDate;
     const key = (field: string) => `${block.id}-${field}`;
+    // Outlook owns a meeting's time and title; its color is the user's.
+    const meeting = isMeetingBlock(block);
 
     const title = h('input', {
       class: 'input',
-      attrs: { type: 'text', value: block.title, maxlength: 60, placeholder: 'Untitled', 'aria-label': 'Title', 'data-focus-key': key('title') },
+      attrs: { type: 'text', value: block.title, maxlength: 60, placeholder: 'Untitled', 'aria-label': 'Title', 'data-focus-key': key('title'), readonly: meeting },
     });
     const commitTitle = () => {
       if (title.value.trim() !== block.title) this.showError(this.actions.commit(block.id, { title: title.value }));
@@ -111,6 +113,8 @@ export class ListView {
     const options = editTimeOptions(this.store.blocks, block, block, settings);
     fillTimeSelect(start, options.starts, block.start, settings);
     fillTimeSelect(end, options.ends, block.end, settings);
+    start.disabled = meeting;
+    end.disabled = meeting;
     const commitTimes = (range: TimeRange) => {
       if (range.start !== block.start || range.end !== block.end) this.showError(this.actions.commit(block.id, range));
     };
@@ -129,19 +133,23 @@ export class ListView {
       if (earlier.getAttribute('aria-disabled') !== 'true') this.showError(this.actions.nudge(block.id, -1));
     });
     earlier.dataset.focusKey = key('earlier');
-    setDisabled(earlier, this.store.canNudge(date, block.id, -1) ? null : 'There is no room to move this block earlier.');
+    setDisabled(earlier, meeting ? MESSAGES.meetingTimes : this.store.canNudge(date, block.id, -1) ? null : 'There is no room to move this block earlier.');
     const later = button('Move later', 'button button--small', () => {
       if (later.getAttribute('aria-disabled') !== 'true') this.showError(this.actions.nudge(block.id, 1));
     });
     later.dataset.focusKey = key('later');
-    setDisabled(later, this.store.canNudge(date, block.id, 1) ? null : 'There is no room to move this block later.');
-    const demolish = button('Demolish', 'button button--small button--quiet', () => this.actions.demolish(block.id));
+    setDisabled(later, meeting ? MESSAGES.meetingTimes : this.store.canNudge(date, block.id, 1) ? null : 'There is no room to move this block later.');
+    const demolish = button('Demolish', 'button button--small button--quiet', () => {
+      if (!meeting) this.actions.demolish(block.id);
+    });
+    setDisabled(demolish, meeting ? MESSAGES.meetingDelete : null);
 
     const outside = isInWindow(block, settings) ? null : h('span', { class: 'list-table__warning', text: 'Outside the day window' });
+    const from = meeting ? h('span', { class: 'list-table__note', text: 'From Outlook' }) : null;
     return h(
       'tr',
       {},
-      h('td', {}, title, outside),
+      h('td', {}, title, from, outside),
       h('td', {}, start),
       h('td', {}, end),
       h('td', { class: 'list-table__length', text: formatDuration(block.end - block.start) }),

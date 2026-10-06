@@ -1,3 +1,4 @@
+import type { MeetingDraft } from './calendar';
 import { LIMITS, defaultSettings } from './defaults';
 import { isInWindow } from './layout';
 import {
@@ -26,6 +27,9 @@ import { isIsoDate, isOnSlot } from './time';
 // Times are fixed: an edit never changes another block's time, except the
 // explicit swap in nudgeBlock (spec 12.4). Resizes stop at neighbors, moves
 // land only in free time, and deleting leaves free time.
+//
+// Meetings synced from Outlook carry an eventId. Outlook owns their time and
+// title, so only syncCalendarDay changes those; the user may recolor them.
 
 export type BlockChangeKind = 'added' | 'removed' | 'resized' | 'moved' | 'retitled' | 'recategorized';
 
@@ -38,7 +42,7 @@ export interface BlockChange {
 }
 
 /** What caused a change. Lets the scene choose, for example, a fast undo build. */
-export type ChangeOrigin = 'user' | 'undo' | 'sample' | 'copy' | 'import' | 'settings';
+export type ChangeOrigin = 'user' | 'undo' | 'sample' | 'copy' | 'import' | 'settings' | 'calendar';
 
 export type StoreEvent =
   | { type: 'blocks'; date: IsoDate; changes: BlockChange[]; origin: ChangeOrigin }
@@ -95,6 +99,10 @@ export const MESSAGES = {
   animationSpeed: `Animation speed must be between ${LIMITS.minAnimationSpeed} and ${LIMITS.maxAnimationSpeed}, so move the slider back into range.`,
   invalidSetting: 'That setting is not valid, so choose one of the listed options.',
   invalidDate: 'That date is not valid, so pick another day.',
+  meetingTimes: 'This meeting comes from Outlook, so change its time or title in Outlook.',
+  meetingDelete: 'This meeting comes from Outlook, so decline or delete it in Outlook.',
+  meetingSwap: 'The block beside it is a meeting from Outlook, so they cannot swap places.',
+  copyBlocked: 'Every block on that day overlaps a meeting here, so nothing was copied.',
 } as const;
 
 function defaultIdFactory(): (prefix: string) => string {
@@ -118,6 +126,11 @@ function overlaps(a: Pick<Block, 'start' | 'end'>, b: Pick<Block, 'start' | 'end
 
 function byStart(a: Block, b: Block): number {
   return a.start - b.start || a.end - b.end;
+}
+
+/** True for a meeting synced from Outlook. */
+export function isMeetingBlock(block: Pick<Block, 'eventId'>): boolean {
+  return block.eventId !== undefined;
 }
 
 function cloneSettings(settings: Settings): Settings {
@@ -258,10 +271,15 @@ export class Store {
     return [...this.days.keys()].sort();
   }
 
-  /** The latest date before `date` that has blocks, if any. */
+  /**
+   * The latest date before `date` with blocks of the user's own, if any. A
+   * day of only meetings has nothing to copy.
+   */
   previousPlannedDate(date: IsoDate): IsoDate | null {
     let found: IsoDate | null = null;
-    for (const day of this.days.keys()) if (day < date && (found === null || day > found)) found = day;
+    for (const [day, blocks] of this.days) {
+      if (day < date && (found === null || day > found) && blocks.some((b) => !isMeetingBlock(b))) found = day;
+    }
     return found;
   }
 
@@ -398,6 +416,9 @@ export class Store {
 
     const startChanged = next.start !== previous.start;
     const endChanged = next.end !== previous.end;
+    if (isMeetingBlock(previous) && origin !== 'calendar' && (startChanged || endChanged || next.title !== previous.title)) {
+      return fail(MESSAGES.meetingTimes);
+    }
     if (startChanged || endChanged) {
       const error = this.checkTimeEdit(previous, next, blocks);
       if (error) return fail(error);
@@ -450,8 +471,10 @@ export class Store {
     const blocks = this.blocksFor(date);
     const block = blocks.find((b) => b.id === id);
     if (!block) return fail(MESSAGES.unknownBlock);
+    if (isMeetingBlock(block)) return fail(MESSAGES.meetingTimes);
     const plan = this.planNudge(blocks, block, direction);
     if (!plan) return fail(direction > 0 ? MESSAGES.noRoomLater : MESSAGES.noRoomEarlier);
+    if (plan.some(isMeetingBlock)) return fail(MESSAGES.meetingSwap);
 
     const changes: BlockChange[] = plan.map((next) => ({
       kind: 'moved',
@@ -468,7 +491,9 @@ export class Store {
   canNudge(date: IsoDate, id: BlockId, direction: -1 | 1): boolean {
     const blocks = this.blocksFor(date);
     const block = blocks.find((b) => b.id === id);
-    return block !== undefined && this.planNudge(blocks, block, direction) !== null;
+    if (!block || isMeetingBlock(block)) return false;
+    const plan = this.planNudge(blocks, block, direction);
+    return plan !== null && !plan.some(isMeetingBlock);
   }
 
   private planNudge(blocks: readonly Block[], block: Block, direction: -1 | 1): Block[] | null {
@@ -508,22 +533,30 @@ export class Store {
     return null;
   }
 
-  /** Removes a block and keeps a copy so undoDelete() can restore it. */
+  /**
+   * Removes a block and keeps a copy so undoDelete() can restore it. Meetings
+   * leave only when Outlook says so, through syncCalendarDay.
+   */
   deleteBlock(date: IsoDate, id: BlockId, origin: ChangeOrigin = 'user'): Result<Block> {
     const blocks = this.blocksFor(date);
     const block = blocks.find((b) => b.id === id);
     if (!block) return fail(MESSAGES.unknownBlock);
+    if (isMeetingBlock(block)) return fail(MESSAGES.meetingDelete);
     this.setDay(date, blocks.filter((b) => b.id !== id));
     this.lastDeleted = { date, blocks: [{ ...block }] };
     this.emit({ type: 'blocks', date, origin, changes: [{ kind: 'removed', block, previous: block }] });
     return ok(block);
   }
 
-  /** Removes every block on a date. They can be restored with undoDelete(). */
+  /**
+   * Removes every block of the user's own on a date; meetings from Outlook
+   * stay. The removed blocks can be restored with undoDelete().
+   */
   clearDay(date: IsoDate, origin: ChangeOrigin = 'user'): Result<number> {
-    const blocks = this.blocksFor(date);
+    const all = this.blocksFor(date);
+    const blocks = all.filter((b) => !isMeetingBlock(b));
     if (blocks.length === 0) return ok(0);
-    this.days.delete(date);
+    this.setDay(date, all.filter(isMeetingBlock));
     this.lastDeleted = { date, blocks: blocks.map((b) => ({ ...b })) };
     this.emit({
       type: 'blocks',
@@ -553,19 +586,26 @@ export class Store {
   }
 
   /**
-   * Copies every block from one day onto an empty day with new ids (spec
-   * 12.8). Times are kept as they are, like any existing block.
+   * Copies the user's own blocks from one day onto a day with none of its own,
+   * with new ids (spec 12.8). Times are kept as they are, like any existing
+   * block. Meetings are not copied, since Outlook has each day's own; a
+   * copied block that would overlap one of the target day's meetings is left
+   * out.
    */
   copyDay(from: IsoDate, to: IsoDate): Result<Block[]> {
     if (!isIsoDate(from) || !isIsoDate(to)) return fail(MESSAGES.invalidDate);
-    if (this.blocksFor(to).length > 0) return fail(MESSAGES.dayNotEmpty);
-    const source = this.blocksFor(from);
+    const meetings = this.blocksFor(to);
+    if (meetings.some((b) => !isMeetingBlock(b))) return fail(MESSAGES.dayNotEmpty);
+    const source = this.blocksFor(from).filter((b) => !isMeetingBlock(b));
     if (source.length === 0) return fail(MESSAGES.nothingToCopy);
     const created: Block[] = [];
     for (const block of source) {
-      created.push({ ...block, id: this.uniqueBlockId(created), createdAt: this.now() });
+      if (meetings.some((m) => overlaps(m, block))) continue;
+      if (meetings.length + created.length >= LIMITS.maxBlocksPerDay) break;
+      created.push({ ...block, id: this.uniqueBlockId([...meetings, ...created]), createdAt: this.now() });
     }
-    this.days.set(to, created);
+    if (created.length === 0) return fail(MESSAGES.copyBlocked);
+    this.days.set(to, [...meetings, ...created].sort(byStart));
     this.emit({ type: 'blocks', date: to, origin: 'copy', changes: created.map((block) => ({ kind: 'added', block })) });
     return ok(created);
   }
@@ -573,6 +613,125 @@ export class Store {
   private setDay(date: IsoDate, blocks: Block[]): void {
     if (blocks.length === 0) this.days.delete(date);
     else this.days.set(date, blocks);
+  }
+
+  // Meetings from Outlook
+
+  /**
+   * Makes a day's meetings match Outlook, as planned by planMeetings: a
+   * meeting already on the tower keeps its block, id, and color and takes
+   * the new time and title; a new one gets a block in `categoryId`; one that
+   * is gone leaves. The user's own blocks are never touched. All or nothing,
+   * as one change event; nothing is announced when nothing changed.
+   */
+  syncCalendarDay(date: IsoDate, meetings: readonly MeetingDraft[], categoryId: CategoryId): Result<BlockChange[]> {
+    if (!isIsoDate(date)) return fail(MESSAGES.invalidDate);
+    if (!this.category(categoryId)) return fail(MESSAGES.unknownCategory);
+    const existing = this.blocksFor(date);
+    const own = existing.filter((b) => !isMeetingBlock(b));
+    const current = new Map(existing.filter(isMeetingBlock).map((b) => [b.eventId!, b]));
+    if (own.length + meetings.length > LIMITS.maxBlocksPerDay) return fail(MESSAGES.dayFull);
+
+    const next: Block[] = [...own];
+    const changes: BlockChange[] = [];
+    const kept = new Set<string>();
+    for (const meeting of meetings) {
+      const { start, end } = meeting;
+      if (kept.has(meeting.eventId)) continue;
+      if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end > 1440 || end <= start) {
+        return fail(MESSAGES.badTimes);
+      }
+      kept.add(meeting.eventId);
+      const title = normalizeTitle(meeting.title);
+      const previous = current.get(meeting.eventId);
+      if (!previous) {
+        const block: Block = {
+          id: this.uniqueBlockId([...existing, ...next]),
+          title,
+          start,
+          end,
+          categoryId,
+          createdAt: this.now(),
+          eventId: meeting.eventId,
+        };
+        next.push(block);
+        changes.push({ kind: 'added', block });
+        continue;
+      }
+      const block: Block = { ...previous, start, end, title };
+      next.push(block);
+      if (start !== previous.start || end !== previous.end) {
+        const sameLength = end - start === previous.end - previous.start;
+        changes.push({ kind: sameLength ? 'moved' : 'resized', block, previous });
+      }
+      if (title !== previous.title) changes.push({ kind: 'retitled', block, previous });
+    }
+    for (const [eventId, block] of current) {
+      if (!kept.has(eventId)) changes.push({ kind: 'removed', block, previous: block });
+    }
+
+    next.sort(byStart);
+    for (let i = 1; i < next.length; i++) {
+      if (next[i]!.start < next[i - 1]!.end) return fail(MESSAGES.overlap);
+    }
+    if (changes.length === 0) return ok([]);
+    this.setDay(date, next);
+    this.emit({ type: 'blocks', date, origin: 'calendar', changes });
+    return ok(changes);
+  }
+
+  /**
+   * Moves every meeting in category `from` to category `to`, on every day,
+   * for when the user picks a different category for meetings. Returns how
+   * many moved.
+   */
+  recategorizeMeetings(from: CategoryId, to: CategoryId): Result<number> {
+    if (!this.category(to)) return fail(MESSAGES.unknownCategory);
+    if (from === to) return ok(0);
+    let count = 0;
+    for (const date of this.plannedDates()) {
+      const changes: BlockChange[] = [];
+      const blocks = this.blocksFor(date).map((block) => {
+        if (!isMeetingBlock(block) || block.categoryId !== from) return block;
+        const moved = { ...block, categoryId: to };
+        changes.push({ kind: 'recategorized', block: moved, previous: block });
+        return moved;
+      });
+      if (changes.length === 0) continue;
+      count += changes.length;
+      this.days.set(date, blocks);
+      this.emit({ type: 'blocks', date, origin: 'calendar', changes });
+    }
+    return ok(count);
+  }
+
+  /**
+   * For disconnecting from Outlook: `keep` turns every meeting into an
+   * ordinary block the user owns; otherwise the meetings are removed. Returns
+   * how many meetings there were.
+   */
+  releaseMeetings(keep: boolean): number {
+    let count = 0;
+    for (const date of this.plannedDates()) {
+      const blocks = this.blocksFor(date);
+      const meetings = blocks.filter(isMeetingBlock);
+      if (meetings.length === 0) continue;
+      count += meetings.length;
+      if (keep) {
+        this.days.set(date, blocks.map(({ eventId: _eventId, ...block }) => block));
+      } else {
+        this.setDay(date, blocks.filter((b) => !isMeetingBlock(b)));
+        this.emit({
+          type: 'blocks',
+          date,
+          origin: 'calendar',
+          changes: meetings.map((block) => ({ kind: 'removed', block, previous: block })),
+        });
+      }
+    }
+    // Kept meetings look the same, but are now editable everywhere.
+    if (keep && count > 0) this.emit({ type: 'loaded' });
+    return count;
   }
 
   // Navigation
