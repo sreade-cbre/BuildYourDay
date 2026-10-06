@@ -94,9 +94,12 @@ export function todayIso(now: Date = new Date()): IsoDate {
   return toIsoDate(now);
 }
 
-/** Minutes since local midnight, with seconds as a fraction, for the now ring. */
+/**
+ * Minutes since local midnight, with seconds and milliseconds as a fraction,
+ * so the now ring and the site under way move smoothly from frame to frame.
+ */
 export function nowMinutes(now: Date = new Date()): number {
-  return now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
+  return now.getHours() * 60 + now.getMinutes() + (now.getSeconds() + now.getMilliseconds() / 1000) / 60;
 }
 
 export function isIsoDate(value: unknown): value is IsoDate {

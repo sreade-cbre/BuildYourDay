@@ -104,7 +104,7 @@ export const CRANE_RETURN_SECONDS = 4;
 /** One excavator dig cycle (spec 10.3 gives 1.2 s for its time lapse). */
 export const DIG_SECONDS = 3.2;
 /** A delivery: driving in, unloading, and driving out. */
-export const DELIVERY = { drive: 9, unload: 22 };
+export const DELIVERY = { drive: 12, unload: 22 };
 /** A mixer visit to pour a deck: driving in and out, and pouring at least this long. */
 export const POUR = { drive: 6, least: 18 };
 /** A facade band starts closing no sooner than this share of the block after its floors are framed. */
@@ -300,7 +300,7 @@ export function siteSchedule(seconds: number, first: boolean, floors: number, li
   // Between pieces the crane brings bundles where the work is, and takes the
   // scaffold back down at the end, so it is never idle for long.
   const where = (t: number): PlannedLift['to'] | null => {
-    if (t >= phases.strike.start && t < at(phases.strike, 0.85)) return 'yard';
+    if (t >= phases.strike.start && t < at(phases.strike, 0.93)) return 'yard';
     if (t >= phases.frame.start && t < phases.frame.end) return 'deck';
     if (t >= phases.frame.end && t < phases.roof.start) return 'planks';
     // Into the pit, or onto the roof below, only until the crew starts on the floor there.
@@ -312,7 +312,7 @@ export function siteSchedule(seconds: number, first: boolean, floors: number, li
   };
   const filler = length + back + 2;
   let bundle = 0;
-  const busy = { start: at(phases.setOut, 0.1), end: at(phases.strike, 0.85) };
+  const busy = { start: at(phases.setOut, 0.1), end: at(phases.strike, 0.93) };
   for (const gap of crane.gaps(busy)) {
     for (let t = gap.start + 1.5; t + filler <= gap.end; t += filler + 2.5) {
       const to = where(t + length);

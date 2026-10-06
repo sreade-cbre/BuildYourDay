@@ -27,6 +27,8 @@ export interface SiteKit {
 
 /** The most workers the block under way puts on site. */
 const LIVE_WORKERS = 10;
+/** How fast the crew turns: most of the way round in about a fifth of a second. */
+const TURN_EASE = 10;
 
 export class LiveKit implements SiteKit {
   readonly root = new THREE.Group();
@@ -47,6 +49,8 @@ export class LiveKit implements SiteKit {
     this.root.name = 'live-site';
     for (let i = 0; i < LIVE_WORKERS; i++) {
       const worker = new Worker(`live-worker-${i}`);
+      // Turning about takes a moment, as it does for anyone.
+      worker.turnEase = TURN_EASE;
       this.workers.push(worker);
       this.root.add(worker.root);
     }

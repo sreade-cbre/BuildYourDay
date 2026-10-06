@@ -39,9 +39,6 @@ export interface LabelSpace {
 /** Runs every frame while registered. Return false when finished. */
 export type Animator = (dt: number) => boolean;
 
-/** Frame rate for background animators while nothing else moves. */
-const SLOW_FPS = 30;
-
 /** A camera place to come back to: what it looks at, and from where. */
 export interface CameraView {
   target: THREE.Vector3;
@@ -58,8 +55,6 @@ export class SceneRoot {
   private readonly sun: THREE.DirectionalLight;
   private readonly fog: THREE.Fog;
   private readonly animators = new Set<Animator>();
-  /** Background animators that need only a calm frame rate when nothing else moves. */
-  private readonly slow = new Map<Animator, number>();
   private readonly renderHooks = new Set<(camera: THREE.Camera) => void>();
   private readonly viewHooks = new Set<() => void>();
   private readonly showHooks = new Set<() => void>();
@@ -210,17 +205,6 @@ export class SceneRoot {
     this.schedule();
   }
 
-  /**
-   * Registers a callback that runs for as long as it returns true, every
-   * frame while anything else animates and SLOW_FPS times a second
-   * otherwise, such as the crew at work on the block under way all day.
-   * It gets the seconds since it last ran.
-   */
-  addSlowAnimator(animator: Animator): void {
-    this.slow.set(animator, 0);
-    this.schedule();
-  }
-
   /** Runs before every render, for example to keep labels beside the tower. */
   onBeforeRender(hook: (camera: THREE.Camera) => void): void {
     this.renderHooks.add(hook);
@@ -255,22 +239,11 @@ export class SceneRoot {
     const dt = this.lastFrame > 0 ? Math.min((time - this.lastFrame) / 1000, 0.1) : 1 / 60;
     this.lastFrame = time;
 
-    let animating = this.animators.size > 0;
+    const animating = this.animators.size > 0;
     for (const animator of [...this.animators]) {
       if (!animator(dt)) this.animators.delete(animator);
     }
     const cameraMoved = this.controls.update(dt);
-    const busy = animating || cameraMoved || this.needsRender || this.controls.autoRotate;
-    for (const [animator, since] of [...this.slow]) {
-      const elapsed = since + dt;
-      if (!busy && elapsed < 1 / SLOW_FPS - 0.002) {
-        this.slow.set(animator, elapsed);
-        continue;
-      }
-      animating = true;
-      if (animator(elapsed)) this.slow.set(animator, 0);
-      else this.slow.delete(animator);
-    }
 
     if (animating || cameraMoved || this.needsRender) {
       this.needsRender = false;
@@ -278,7 +251,7 @@ export class SceneRoot {
       this.renderer.render(this.scene, this.camera);
     }
 
-    if (this.animators.size > 0 || this.slow.size > 0 || cameraMoved || this.controls.autoRotate) this.schedule();
+    if (this.animators.size > 0 || cameraMoved || this.controls.autoRotate) this.schedule();
     else this.lastFrame = 0;
   };
 

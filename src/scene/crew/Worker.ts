@@ -54,6 +54,14 @@ export class Worker {
   private current: Pose = poseFor('idle', 0);
   private blendFrom: Pose | null = null;
   private blendElapsed = 0;
+  /**
+   * How quickly the worker turns to a new heading, as a rate of easing in;
+   * 0 turns at once. The live crew turns smoothly; a job's crew snaps.
+   */
+  turnEase = 0;
+  private heading = 0;
+  /** True until placed after being hidden, so a worker who appears faces the right way at once. */
+  private fresh = true;
 
   constructor(name: string) {
     this.root.name = name;
@@ -144,6 +152,7 @@ export class Worker {
 
   hide(): void {
     this.root.visible = false;
+    this.fresh = true;
     this.root.scale.setScalar(1);
     this.hammer.visible = false;
     this.board.visible = false;
@@ -153,7 +162,10 @@ export class Worker {
   /** Places the worker's feet at a point, facing a heading. */
   place(x: number, y: number, z: number, heading: number): void {
     this.root.position.set(x, y, z);
+    this.heading = heading;
+    if (this.turnEase > 0 && !this.fresh) return;
     this.root.rotation.y = heading;
+    this.fresh = false;
   }
 
   /**
@@ -180,6 +192,11 @@ export class Worker {
   /** Applies the pose. Runs every frame while the worker is visible. */
   update(dt: number): void {
     if (!this.root.visible) return;
+    if (this.turnEase > 0) {
+      const r = this.root.rotation.y;
+      const turn = Math.atan2(Math.sin(this.heading - r), Math.cos(this.heading - r));
+      this.root.rotation.y = r + turn * (1 - Math.exp(-this.turnEase * dt));
+    }
     const target = poseFor(this.anim, this.phase);
     if (this.blendFrom) {
       this.blendElapsed += dt;

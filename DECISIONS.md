@@ -868,3 +868,52 @@ what was decided and why. Section numbers refer to `TIME_TOWER_SPEC.md`.
     over free time, and blocks on the tower of 15 minutes, 90 minutes, 4
     hours, and 8 hours, in reduced motion and through the speed preview,
     logged no console errors.
+
+### Smooth and busy
+
+34. **Smooth motion (your report, October 6, 2026: "it looks really
+    choppy").** The site read the clock in whole seconds, so everything on
+    it moved in one second steps and a walk cycle barely changed between
+    them; it now reads milliseconds. It also drew 30 frames a second when
+    nothing else moved, under decision 24; it now draws every frame the
+    display shows while a block is building, which takes over from
+    decision 24. Measured in headless Chrome: a frame every 16.7 ms at 60
+    a second.
+35. **The crane glides.** The hook used to drop from the top of the tower
+    to the yard in about two seconds, at up to 34 units a second. Now each
+    lift overlaps its motions as a crane driver would: the hook rises and
+    falls during the swing wherever it is clear of what stands, travels
+    only as high as the frame and scaffold actually stand at that moment,
+    not the finished block, and between lifts waits low over the yard
+    rather than up at the jib. Each load's sideways reach is counted in
+    clearing the tower. Over a 90 minute block the hook's 99th percentile
+    speed is 7 units a second, and checking every carry found no load below
+    the top of what stands while over the tower, other than a column's
+    last half unit onto its corner and scaffold taken off the scaffold.
+36. **No dashes, snaps, or jumps.** Machines, the delivery truck, the hoist
+    cage, and climbers now pull away, hold a steady speed, and slow to a
+    stop, rather than easing in and out, which tripled their speed midway.
+    The mixer backs up at 1 unit a second, the truck has 12 seconds to
+    drive in and reverses straight back before turning into the lane, and
+    a crew member short of time hurries to at most twice a walk rather
+    than dashing. The crew turns smoothly instead of flipping round in a
+    frame. Screeding and carrying used to run on past their end, so the
+    next move started from somewhere else and the worker jumped; they now
+    end where the next move begins. Measured frame by frame at 30 a second
+    over whole blocks: no worker faster than a jog, and no jump anywhere.
+37. **Ten on site from an hour.** Blocks of an hour or more add two to
+    decision 30's eight. A hoist driver runs materials up all through the
+    frame and the facade: loads the cage from the road, rides up to the
+    deck being worked, unloads, and rides back down, riding about two
+    thirds of their time on site. Where there is no hoist, on the day's
+    first block at ground level, they carry from the yard round to the
+    tower instead. A traffic marshal sweeps the gateway and stands aside at
+    the gate post to wave each truck in and out. The hoist now comes to
+    anyone waiting for it before they step on.
+38. **Busy to the last moment.** The crane brings scaffold down to the yard
+    until near the end of the strike, then parks, and the foreman and the
+    marshal walk out just as the time is up. Stepping through whole blocks
+    a second at a time, something on site is moving all the way through
+    but for a few seconds at the very end: the longest still moment is 6
+    seconds on a 90 minute block, 3 on an hour, none on 15 minutes, and 19
+    on 4 hours, where it used to be up to a minute. The crane is moving 81 to 87% of the time.

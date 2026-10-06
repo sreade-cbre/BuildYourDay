@@ -18,7 +18,7 @@ export interface LiveHost {
   calm(): boolean;
   /** Animation speed for the crew's motion. */
   speed(): number;
-  /** Runs a callback every frame, or at a calm rate while nothing else moves, until it returns false. */
+  /** Runs a callback every frame until it returns false. */
   animate(frame: (dt: number) => boolean): void;
   /** What the job playing now has borrowed. */
   borrowed(): { crane: boolean; machines: boolean };

@@ -357,7 +357,7 @@ export class App {
     const live = new LiveSite(jobs, liveKit, {
       calm: () => this.reducedMotion(),
       speed: () => this.store.settings.animationSpeed,
-      animate: (frame) => root.addSlowAnimator(frame),
+      animate: (frame) => root.addAnimator(frame),
       borrowed: () => {
         const borrows = director.current?.borrows ?? [];
         return { crane: borrows.includes('crane'), machines: borrows.includes('machines') };

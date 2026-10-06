@@ -69,10 +69,12 @@ and deleting a block leaves free time behind.
   runs out. The site is busy the whole time: the crane lifts every column,
   beam, deck bundle, and facade panel on slings from a stockyard by its
   base, and bundles of rebar, formwork, and scaffold between them; a
-  slinger hooks each load on and a banksman signals it up; the racks run
-  down and a flatbed truck backs in to restock them; and the mixer comes
-  back to pour each floor. Up to eight work the block, each at their
-  trade. The block's label names the trade at work, such as framing or
+  slinger hooks each load on and a banksman signals it up; a hoist driver
+  rides materials up the side of the tower; the racks run down and a
+  flatbed truck backs in to restock them while a marshal waves it through
+  the gate; and the mixer comes back to pour each floor. Up to ten work
+  the block, each at their trade, and it all moves smoothly, frame by
+  frame. The block's label names the trade at work, such as framing or
   cladding. Open the app at any moment and the site is where that moment
   puts it. Around it all is a fenced site with
   an entrance, cabins, toilets, a skip, and a lighting tower; once the plot

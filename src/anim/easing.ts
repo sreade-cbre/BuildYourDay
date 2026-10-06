@@ -8,6 +8,24 @@ export const easeOutCubic: Ease = (t) => 1 - (1 - t) ** 3;
 
 export const easeInOutCubic: Ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2);
 
+/** Gentle in and out, for long smooth moves like the crane's. */
+export const easeInOutSine: Ease = (t) => (1 - Math.cos(Math.PI * t)) / 2;
+
+/**
+ * Speeds up over the first `ramp` of the way, holds a steady speed, and
+ * slows over the last `ramp`, so a vehicle drives without lurching.
+ */
+export function cruise(ramp = 0.2): Ease {
+  const speed = 1 / (1 - ramp);
+  return (t) => {
+    if (t <= 0) return 0;
+    if (t >= 1) return 1;
+    if (t < ramp) return (speed * t * t) / (2 * ramp);
+    if (t <= 1 - ramp) return speed * (ramp / 2 + t - ramp);
+    return 1 - (speed * (1 - t) * (1 - t)) / (2 * ramp);
+  };
+}
+
 /** Overshoots by the spec's 1.4 before settling. */
 export const easeOutBack: Ease = (t) => {
   const c1 = 1.4;

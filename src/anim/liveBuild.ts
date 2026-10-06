@@ -3,7 +3,7 @@ import { BLOCK_FOOTPRINT, UNITS_PER_MINUTE } from '../core/layout';
 import type { Block } from '../core/model';
 import { rngFromString } from '../core/rng';
 import { HOOK_HANG, type CranePose } from '../scene/crew/Crane';
-import { CRANE_PARK, HOMES, SITE_Y, STACK, WORKER_GATE, WORK_SPOTS, type Spot as Home } from '../scene/crew/Crew';
+import { CRANE_PARK, HOMES, SITE_Y, WORKER_GATE, WORK_SPOTS, type Spot as Home } from '../scene/crew/Crew';
 import { ARM_REST, type ArmPose } from '../scene/crew/Excavator';
 import type { LiveKit } from '../scene/crew/LiveKit';
 import { BEAM_SIZE, DECK_THICKNESS, type BundleKind } from '../scene/crew/props';
@@ -13,7 +13,7 @@ import type { WorkerAnim } from '../scene/crew/workerAnims';
 import { PAD_OFFSET, PLOT_TOP_Y } from '../scene/Foundation';
 import { DEPOT_TOP_Y, GROUND_Y } from '../scene/Ground';
 import { RAMP, ROAD_Z } from '../scene/SiteYard';
-import { easeInOutCubic, easeOutBack, easeOutBounce, easeOutCubic, type Ease } from './easing';
+import { cruise, easeInOutCubic, easeInOutSine, easeOutBack, easeOutBounce, easeOutCubic, type Ease } from './easing';
 import { Path, angleBetween, type Point2 } from './path';
 import type { JobScene } from './jobs/scene';
 import * as plan from './sitePlan';
@@ -88,6 +88,12 @@ const BANKSMAN = { x: 6.1, z: -1.6 };
 /** A laborer carries from the yard to the bay in front of the tower. */
 const STACK_PICK = { x: 6.6, z: -1.75 };
 const BAY = { x: 1.9, z: 3.2 };
+/** A second carrier's run where there is no hoist: from the yard round to the tower's far front corner. */
+const YARD_PICK = { x: 6.6, z: -1.1 };
+const FAR_BAY = { x: -1.6, z: 3.3 };
+/** The line the marshal sweeps just inside the gate, and where they stand aside to wave the trucks through. */
+const GATEWAY = { from: { x: 6.25, z: 3.95 }, to: { x: 8.15, z: 3.95 } };
+const MARSHAL_SPOT = { x: 5.8, z: 4.05 };
 /** Where each of the crew on the building stands on the scaffold at the start of the strike. */
 const SCAFFOLD_SPOTS: ReadonlyArray<readonly [ScaffoldFace, number]> = [['front', -0.45], ['left', 0.35], ['front', 0.55], ['left', -0.45]];
 /** The facade panels of a band: two on the front face and two on the left, where the scaffold has planks. */
@@ -125,6 +131,17 @@ const LANES = [0.4, -1.5, 2.1];
 const SCREED_PASS = 6;
 /** The crane lowers loads from this far above where they land (as in choreography.ts). */
 const DROP = 0.25;
+/** How far out from the tower's middle the crane counts as over it: the footprint and the scaffold. */
+const TOWER_ZONE = BLOCK_FOOTPRINT / 2 + 0.5;
+/** A lift's shares: the hook is at the load by FETCH_END, picks it up at PICK, and lets it go at CARRY_END. */
+const FETCH_END = 0.44;
+const CARRY_END = 0.9;
+/** Vehicles, the hoist, and climbers pull away, go at a steady speed, and slow to a stop. */
+const STEADY = cruise(0.25);
+/** The most a hurried worker speeds up: twice a walk, a jog. */
+const HURRY = 2;
+/** Sweeping is slow going: units a second along the broom's line. */
+const SWEEP_SPEED = 0.5;
 
 type Run = (u: number, t: number) => void;
 
@@ -136,7 +153,9 @@ interface Segment {
 
 /**
  * What one object does over the block, as segments in time order that never
- * overlap. Between segments it stays as the last one left it.
+ * overlap. Between segments it stays as the last one left it: the last
+ * segment runs on with progress held at 1 and the clock running, so a
+ * worker keeps hammering where they stand, but no one moves on.
  */
 class Track {
   private readonly segments: Segment[] = [];
@@ -241,7 +260,9 @@ class Crewman {
 
   private span(length: number, speed: number, start: number, by?: number): number {
     const natural = length / (speed * this.pace);
-    return by === undefined ? natural : Math.max(0.3, Math.min(natural, by - start));
+    if (by === undefined) return natural;
+    // Short of time they hurry, but never faster than a jog: late beats a dash.
+    return Math.max(Math.min(0.3, natural), natural / HURRY, Math.min(natural, by - start));
   }
 
   /** Arrives at the first point and walks the rest. */
@@ -318,7 +339,7 @@ class Crewman {
     const pace = this.pace;
     this.track.add(start, start + duration, (u, t) => {
       worker.show();
-      worker.place(p.x, p.y + (y - p.y) * easeInOutCubic(u), p.z, p.heading);
+      worker.place(p.x, p.y + (y - p.y) * STEADY(u), p.z, p.heading);
       worker.setAnimationAt(u >= 1 ? 'idle' : 'walk', (t - start) * pace);
     });
     this.place = { ...p, y };
@@ -331,7 +352,7 @@ class Crewman {
     const worker = this.worker;
     this.track.add(start, end, (u) => {
       worker.show();
-      worker.place(p.x, p.y + (y - p.y) * easeInOutCubic(u), p.z, Math.PI / 2);
+      worker.place(p.x, p.y + (y - p.y) * STEADY(u), p.z, Math.PI / 2);
       worker.setAnimationAt('ride', u);
     });
     this.place = { ...p, y, heading: Math.PI / 2 };
@@ -343,12 +364,15 @@ class Crewman {
     if (until <= start) return;
     const worker = this.worker;
     const pace = this.pace;
+    // Whole passes there and back, so they finish where they started.
+    const trips = Math.max(1, Math.round(((until - start) * pace) / (2 * SCREED_PASS)));
+    const pass = (until - start) / (2 * trips);
     this.track.add(start, until, (_u, t) => {
-      const passes = ((t - start) * pace) / SCREED_PASS;
-      const leg = passes % 2;
+      // Past the end they stand at the lane's end, still working the board.
+      const leg = ((Math.min(t, until) - start) / pass) % 2;
       const back = leg > 1;
-      const s = back ? leg - 1 : leg;
-      // Walking backward along the lane, the board in front.
+      const s = easeInOutSine(back ? leg - 1 : leg);
+      // Walking backward along the lane, the board in front, easing round at each end.
       const z = back ? -1.6 + 3.2 * s : 1.6 - 3.2 * s;
       worker.show();
       worker.place(x, y, z, back ? Math.PI : 0);
@@ -376,7 +400,7 @@ class Crewman {
     const worker = this.worker;
     const pace = this.pace;
     this.track.add(start, end, (_u, t) => {
-      const local = (t - start) % cycle;
+      const local = (Math.min(t, end) - start) % cycle;
       worker.show();
       if (local < pause) {
         worker.place(pick.x, SITE_Y, pick.z, path.atFraction(0).heading);
@@ -396,6 +420,28 @@ class Crewman {
     });
     this.place = { x: pick.x, y: SITE_Y, z: pick.z, heading: 0 };
     this.work(until, 'idle');
+  }
+
+  /** Sweeps back and forth between two points until `until`, ending where they began. */
+  sweep(until: number, a: Point2, b: Point2): void {
+    const start = Math.max(this.free, 0);
+    if (until <= start) return;
+    const length = Math.hypot(b.x - a.x, b.z - a.z);
+    const trips = Math.max(1, Math.round((until - start) / ((2 * length) / (SWEEP_SPEED * this.pace))));
+    const pass = (until - start) / (2 * trips);
+    const heading = Math.atan2(b.x - a.x, b.z - a.z);
+    const worker = this.worker;
+    const pace = this.pace;
+    this.track.add(start, until, (_u, t) => {
+      const leg = ((Math.min(t, until) - start) / pass) % 2;
+      const back = leg > 1;
+      const s = easeInOutSine(back ? leg - 1 : leg);
+      const f = back ? 1 - s : s;
+      worker.show();
+      worker.place(a.x + (b.x - a.x) * f, SITE_Y, a.z + (b.z - a.z) * f, back ? heading + Math.PI : heading);
+      worker.setAnimationAt('screed', (t - start) * pace);
+    });
+    this.place = { x: a.x, y: SITE_Y, z: a.z, heading };
   }
 
   /** Walks off site by the gate and is gone. */
@@ -443,13 +489,13 @@ class Rig {
     const path = new Path(dedupe([{ x: this.at.x, z: this.at.z }, ...points]));
     const start = Math.max(at, this.free);
     const natural = path.length / ((options.speed ?? plan.DRIVE_SPEED) * this.pace);
-    const duration = options.by === undefined ? natural : Math.max(0.5, Math.min(natural, options.by - start));
+    const duration = options.by === undefined ? natural : Math.max(Math.min(0.5, natural), natural / 1.5, Math.min(natural, options.by - start));
     const rolled = this.rolled;
     const sign = options.reverse ? -1 : 1;
     const parts = options.parts ?? this.rest;
     const face = options.face;
     this.track.add(start, start + duration, (u, t) => {
-      const e = easeInOutCubic(u);
+      const e = STEADY(u);
       const p = path.atFraction(e, 0.6);
       let heading = options.reverse ? p.heading + Math.PI : p.heading;
       if (face !== undefined && u > 0.85) heading += angleBetween(heading, face) * ((u - 0.85) / 0.15);
@@ -476,6 +522,22 @@ class Rig {
 }
 
 /** What the crane carries: shown on the hook, then set down where it goes. */
+/** One stretch of the crane's work: its pose as progress runs from 0 to 1. */
+interface CraneRoute {
+  at(s: number): CranePose;
+}
+
+/** How the crane works one lift. */
+interface CranePlan {
+  /** Where it lets the load go. */
+  release: CranePose;
+  fetch: CraneRoute;
+  carry: CraneRoute;
+  /** Back to wait over the yard, when the next lift is not close behind, and the seconds that takes. */
+  home: CraneRoute | null;
+  homeTime: number;
+}
+
 /** A load on the hook, placed by its lifting point: the middle of its top. */
 interface Cargo {
   place(at: THREE.Vector3): void;
@@ -494,6 +556,8 @@ interface Lift {
   /** How far the load hangs below the hook on its slings, and how far it reaches below its lifting point. */
   sling: number;
   reach: number;
+  /** How far the load reaches out sideways from its lifting point, for clearing the tower. */
+  extent: number;
   cargo: Cargo;
   landing: Ease;
   /** For a bundle set down where the work is, when it has been used. */
@@ -527,6 +591,11 @@ function blendPose(a: CranePose, b: CranePose, t: number): CranePose {
     trolley: a.trolley + (b.trolley - a.trolley) * t,
     hookY: a.hookY + (b.hookY - a.hookY) * t,
   };
+}
+
+/** Smooth progress from 0 to 1 as `u` runs from `a` to `b`, holding before and after. */
+function phase(u: number, a: number, b: number): number {
+  return easeInOutSine(clamp01((u - a) / (b - a)));
 }
 
 /** The last item in a list sorted by `key` whose key is at most `t`, or -1. */
@@ -571,13 +640,17 @@ interface Roles {
   slinger: Crewman | null;
   /** Carries, and unloads the deliveries. */
   laborer: Crewman | null;
+  /** Runs materials up the hoist, or carries where there is none. */
+  hoistman: Crewman | null;
+  /** Keeps the gateway and waves the trucks in and out. */
+  marshal: Crewman | null;
   /** Everyone who works up on the building, in scaffold order. */
   elevated: Crewman[];
 }
 
 /** How many come to work on a block: the bigger the job, the bigger the crew. */
 export function liveCrewSize(minutes: number): number {
-  return minutes < 15 ? 4 : minutes < 30 ? 6 : 8;
+  return minutes < 15 ? 4 : minutes < 30 ? 6 : minutes < 60 ? 8 : 10;
 }
 
 /** A crew member's next piece of work on the building. */
@@ -631,6 +704,9 @@ export class SiteScript {
   private dozerPasses: Array<{ t0: number; t1: number; from: number; to: number; extra: number }> = [];
   private digSpan: plan.Span | null = null;
   private readonly mixerVisits: plan.Span[] = [];
+  /** Where the hoist cage is once its last move ends, while planning. */
+  private cageY = SITE_Y;
+  private readonly cranePlans = new Map<number, CranePlan>();
   /** Whether the site has the crane this frame, rather than a job. */
   private craneOurs = true;
   private readonly cache = new Map<string, string>();
@@ -713,7 +789,9 @@ export class SiteScript {
     const banksman = count >= 6 ? take() : null;
     const slinger = take();
     const laborer = take();
-    return { foreman: foreman!, connectors, cladders, banksman, slinger, laborer, elevated: [...connectors, ...cladders] };
+    const hoistman = take();
+    const marshal = take();
+    return { foreman: foreman!, connectors, cladders, banksman, slinger, laborer, hoistman, marshal, elevated: [...connectors, ...cladders] };
   }
 
   private planCrew(): void {
@@ -732,14 +810,17 @@ export class SiteScript {
     foreman.work(plan.at(phases.setOut, 0.9), 'survey');
     this.patrol(foreman, pack);
     foreman.work(pack + 1, 'idle');
-    foreman.leave(pack + 1, plan.at(strike, 0.96));
+    foreman.leave(pack + 1, plan.at(strike, 0.995));
 
     if (first) this.planGroundworks(elevated);
     else this.planMobilize(elevated);
     this.planFrame(roles);
     this.planEnvelope(roles);
+    // The hoist runs go up before the strike, which rides the hoist down after them.
+    if (roles.hoistman) this.planHoistRuns(roles.hoistman);
     this.planStrike(elevated);
     this.planGroundCrew(roles);
+    if (roles.marshal) this.planMarshal(roles.marshal);
   }
 
   /** The foreman's rounds: at the tripod, then down to the tower and back. */
@@ -853,17 +934,30 @@ export class SiteScript {
    * once everyone is on, and it arrives at `y`. Returns when it arrives.
    */
   private rideHoist(riders: Crewman[], at: number, y: number, by: number): number {
-    let depart = at;
+    const from = riders[0]!.place!.y;
+    const ready = this.callCage(from, at);
+    let depart = ready;
     riders.forEach((man, j) => {
       const rider = this.kit.hoist.riderSpot(j);
-      depart = Math.max(depart, man.walk(at, [rider], { face: Math.PI / 2 }));
+      depart = Math.max(depart, man.walk(ready, [rider], { face: Math.PI / 2 }));
     });
-    const from = riders[0]!.place!.y;
     const natural = Math.abs(y - from) / (plan.RIDE_SPEED * this.options.pace);
     const arrive = depart + Math.max(0.5, Math.min(natural, by - depart));
     for (const man of riders) man.ride(depart, arrive, y);
-    this.cage.add(depart, arrive, (u) => this.kit.hoist.setCage(from + (y - from) * easeInOutCubic(u)));
+    this.cage.add(depart, arrive, (u) => this.kit.hoist.setCage(from + (y - from) * STEADY(u)));
+    this.cageY = y;
     return arrive;
+  }
+
+  /** Sends the cage to `y` if it is elsewhere, there by `by` if it can be. Returns when it is there. */
+  private callCage(y: number, by: number): number {
+    if (Math.abs(this.cageY - y) < 0.01) return by;
+    const travel = Math.abs(this.cageY - y) / (plan.RIDE_SPEED * this.options.pace);
+    const go = Math.max(this.cage.end, by - travel);
+    const from = this.cageY;
+    this.cage.add(go, go + travel, (u) => this.kit.hoist.setCage(from + (y - from) * STEADY(u)));
+    this.cageY = y;
+    return go + travel;
   }
 
   // Where things are
@@ -1183,6 +1277,66 @@ export class SiteScript {
     }
   }
 
+  /**
+   * The hoist driver keeps materials going up all through the frame and the
+   * facade: loads the cage from the road, rides up to the deck being worked,
+   * unloads, and rides back down. Where there is no hoist, they carry from
+   * the yard round to the far side of the tower instead.
+   */
+  private planHoistRuns(man: Crewman): void {
+    const { phases } = this;
+    const pace = this.options.pace;
+    const stop = phases.strike.start;
+    const begin = this.hoistUp ? Math.max(this.hoistUp.end + 2, plan.at(phases.frame, 0.06)) : phases.frame.start;
+    if (!this.hoistUp) {
+      man.enter(begin, [WORKER_GATE, YARD_PICK], SITE_Y, { by: begin + 8 });
+      man.carry(stop, YARD_PICK, FAR_BAY);
+      man.leave(Math.max(man.free, stop), plan.at(phases.strike, 0.5));
+      return;
+    }
+    const rider = this.kit.hoist.riderSpot(0);
+    const road = { x: -RING, z: rider.z };
+    man.enter(begin, ringRoute(WORKER_GATE, road), SITE_Y, { by: begin + 12 });
+    for (;;) {
+      const deckY = this.workDeckY(man.free + 15);
+      const ride = Math.abs(deckY - SITE_Y) / (plan.RIDE_SPEED * pace);
+      if (man.free + 2 * ride + 30 / pace > stop) break;
+      man.carry(man.free + 9 / pace, road, rider, true);
+      const up = this.rideHoist([man], man.free, deckY, man.free + ride);
+      man.walk(up, [{ x: -1.7, z: rider.z }], { face: Math.PI / 2 });
+      man.work(man.free + 4 / pace, 'hammer');
+      const down = this.rideHoist([man], man.free, SITE_Y, man.free + ride);
+      man.walk(down, [road]);
+    }
+    man.work(man.free + 2, 'idle');
+    man.leave(man.free, plan.at(phases.strike, 0.5));
+  }
+
+  /**
+   * The traffic marshal keeps the gateway: sweeps it between trucks and
+   * stands aside to wave each one in off the street and back out.
+   */
+  private planMarshal(man: Crewman): void {
+    const { phases } = this;
+    const begin = plan.at(phases.setOut, 0.3);
+    const ends = plan.at(phases.strike, 0.97);
+    const passing = this.schedule.deliveries
+      .flatMap((d) => [
+        { start: d.arrives - 3, end: d.unload.start + 1 },
+        { start: d.unload.end - 2, end: d.leaves + 1 },
+      ])
+      .filter((w) => w.end > begin && w.start < ends);
+    man.enter(begin, [WORKER_GATE, GATEWAY.from], SITE_Y, { face: 0 });
+    for (const w of passing) {
+      man.sweep(w.start - 2, GATEWAY.from, GATEWAY.to);
+      man.walk(man.free, [MARSHAL_SPOT], { face: 0 });
+      man.watch(w.end, () => 'signal');
+      man.walk(man.free, [GATEWAY.from]);
+    }
+    man.sweep(ends - 2, GATEWAY.from, GATEWAY.to);
+    man.leave(man.free, plan.at(phases.strike, 0.995));
+  }
+
   private planMachines(): void {
     const { crew } = this.scene;
     const pace = this.options.pace;
@@ -1192,9 +1346,10 @@ export class SiteScript {
     const drum = (t: number) => crew.mixer.setDrum(((t * pace) / 1.5) * TAU);
     const visit = (arrive: number, leave: number) => {
       this.mixerVisits.push({ start: arrive, end: leave + plan.POUR.drive });
-      mixer.drive(arrive, [WORK_SPOTS.mixer], { reverse: true, parts: drum, by: arrive + plan.POUR.drive });
+      // A loaded mixer backs up slowly and pulls away gently.
+      mixer.drive(arrive, [WORK_SPOTS.mixer], { reverse: true, speed: 1.0, parts: drum, by: arrive + plan.POUR.drive });
       mixer.idle(leave, drum);
-      mixer.drive(leave, [HOMES.mixer], { parts: drum, by: leave + plan.POUR.drive });
+      mixer.drive(leave, [HOMES.mixer], { speed: 1.4, parts: drum, by: leave + plan.POUR.drive });
     };
     if (this.first) {
       this.planDozer(false);
@@ -1217,7 +1372,7 @@ export class SiteScript {
     const leg = (start: number, end: number, points: Point2[], reverse: boolean, load: number, rolled: number): number => {
       const path = new Path(points);
       this.truck.add(start, end, (u) => {
-        const e = easeInOutCubic(u);
+        const e = STEADY(u);
         const p = path.atFraction(e, 0.6);
         flatbed.drive({ x: p.x, z: p.z, heading: reverse ? p.heading + Math.PI : p.heading, distance: rolled + (reverse ? -1 : 1) * e * path.length }, roadY(p.z));
         flatbed.setLoad(load);
@@ -1229,7 +1384,7 @@ export class SiteScript {
       const inTime = Math.min(plan.DELIVERY.drive, (delivery.unload.start - delivery.arrives) || plan.DELIVERY.drive);
       const along = delivery.arrives + inTime * 0.55;
       let rolled = leg(delivery.arrives, along, [{ x: -10, z: street }, { x: lane + 1.6, z: street }], false, 1, 0);
-      rolled = leg(along, delivery.unload.start, [{ x: lane + 1.6, z: street }, { x: lane, z: street - 1.0 }, { x: lane, z: park }], true, 1, rolled);
+      rolled = leg(along, delivery.unload.start, [{ x: lane + 1.6, z: street }, { x: lane + 0.7, z: street }, { x: lane, z: street - 1.2 }, { x: lane, z: park }], true, 1, rolled);
       const parked = rolled;
       this.truck.add(delivery.unload.start, delivery.unload.end, (u) => {
         flatbed.drive({ x: lane, z: park, heading: 0, distance: parked }, DEPOT_TOP_Y);
@@ -1377,6 +1532,7 @@ export class SiteScript {
             to: new THREE.Vector3(c.x, this.floorBase(lift.floor) + fh, c.z),
             sling: 0.05,
             reach: fh,
+            extent: 0.15,
             landing: easeOutCubic,
             cargo: { place: (p) => props.setColumnPiece(index, p.x, p.y - fh, p.z, fh), rig: (p) => [p.clone()] },
           });
@@ -1391,6 +1547,7 @@ export class SiteScript {
             to: center.clone().setY(center.y + BEAM_SIZE / 2),
             sling: 0.5,
             reach: BEAM_SIZE,
+            extent: BLOCK_FOOTPRINT / 2,
             landing: easeOutBounce,
             cargo: {
               place: (p) => props.setBeam(lift.floor, slot, p.x, p.y - BEAM_SIZE / 2, p.z),
@@ -1406,6 +1563,7 @@ export class SiteScript {
             to: new THREE.Vector3(0, this.ringY(lift.floor) + BEAM_SIZE / 2 + BUNDLE_TOP, 1.72),
             sling: 0.15,
             reach: BUNDLE_TOP,
+            extent: 0.35,
             landing: easeOutCubic,
             cargo: { place: (p) => props.setBundle(DECK_BUNDLE, bundleAt(p), 'formwork'), rig: corners(0.24, 0.15) },
           });
@@ -1420,6 +1578,7 @@ export class SiteScript {
             to: center.clone().setY(center.y + bandHeight / 2),
             sling: 0.35,
             reach: bandHeight,
+            extent: PANEL_WIDTH / 2,
             landing: easeOutCubic,
             cargo: {
               place: (p) => props.setPanel(slot, p.x, p.y - bandHeight / 2, p.z, bandHeight, 1, PANEL_WIDTH, turn),
@@ -1435,6 +1594,7 @@ export class SiteScript {
             to: new THREE.Vector3(0, this.top + 0.002, 0),
             sling: 1.0,
             reach: 0.1,
+            extent: BLOCK_FOOTPRINT / 2 + 0.1,
             landing: easeOutBack,
             cargo: { place: (p) => props.setRoof(p), rig: corners(1.4, 1.4) },
           });
@@ -1465,6 +1625,7 @@ export class SiteScript {
             to: rest.clone().setY(rest.y + BUNDLE_TOP),
             sling: 0.15,
             reach: BUNDLE_TOP,
+            extent: 0.35,
             landing: easeOutCubic,
             cargo: { place: (p) => props.setBundle(slot, bundleAt(p), kind), rig: corners(0.24, 0.15) },
           });
@@ -1543,57 +1704,125 @@ export class SiteScript {
 
   private applyCrane(t: number): void {
     const { crane } = this.scene.crew;
-    const parked: CranePose = { ...CRANE_PARK, hookY: crane.hookCeiling };
     const i = lastAtOrBefore(this.lifts, t, (l) => l.start);
     const lift = i >= 0 ? this.lifts[i]! : null;
-    const back = this.schedule.craneReturn;
-    if (!lift || t >= lift.start + lift.length + back) {
-      crane.setPose(parked);
+    if (!lift) {
+      crane.setPose(this.parked());
       return;
     }
-    const from = lift.from(lift.start);
-    const to = lift.to;
-    const pick = crane.aim(from.x, from.z);
-    const drop = crane.aim(to.x, to.z);
-    const below = HOOK_HANG + lift.sling;
-    const pickHook = from.y + below;
-    const releaseHook = to.y + DROP + below;
-    // High enough that the load's foot clears the tower and the stack on the way over.
-    const travelY = Math.min(crane.pivotY - 0.45, Math.max(this.top, STACK.top) + 0.35 + lift.reach + below);
-    const overPick = { ...pick, hookY: travelY };
-    const atPick = { ...pick, hookY: pickHook };
-    const overDrop = { ...drop, hookY: travelY };
-    const atRelease = { ...drop, hookY: releaseHook };
-    // The crane swings straight on from one lift to the next; it waits over the yard only when there is time.
-    const previous = i > 0 ? this.lifts[i - 1]! : null;
-    const fromPose = previous && lift.start - (previous.start + previous.length) < back + 0.5 ? this.releasePose(previous) : parked;
+    const work = this.cranePlan(i);
     const u = (t - lift.start) / lift.length;
-    const e = easeInOutCubic;
     if (u >= 1) {
-      const next = this.lifts[i + 1];
-      // With the next lift close behind, the hook heads for it rather than home.
-      if (next && next.start - (lift.start + lift.length) < back + 0.5) {
-        crane.setPose(atRelease);
-        return;
-      }
-      crane.setPose(blendPose(atRelease, parked, e(clamp01((t - lift.start - lift.length) / back))));
+      // Holding at the release for the next lift close behind, or on its way to wait over the yard.
+      const s = (t - lift.start - lift.length) / work.homeTime;
+      crane.setPose(work.home ? work.home.at(Math.min(1, s)) : work.release);
       return;
     }
-    if (u < 0.3) crane.setPose(blendPose(fromPose, overPick, e(u / 0.3)));
-    else if (u < plan.PICK) crane.setPose(blendPose(overPick, atPick, e((u - 0.3) / 0.15)));
-    else if (u < 0.8) {
-      const s = e((u - plan.PICK) / 0.35);
-      const p = blendPose(atPick, overDrop, Math.max(0, (s - 0.2) / 0.8));
-      p.hookY = pickHook + (travelY - pickHook) * easeOutCubic(Math.min(1, s * 2.5));
-      crane.setPose(p);
-      this.hang(lift, this.load(lift));
-    } else if (u < 0.9) {
-      crane.setPose(blendPose(overDrop, atRelease, e((u - 0.8) / 0.1)));
-      this.hang(lift, this.load(lift));
-    } else {
-      crane.setPose(atRelease);
-      this.hang(lift, this.load(lift).lerp(to, lift.landing((u - 0.9) / 0.1)));
+    // Up out of where the last load went and round to the yard, down to the
+    // load, up again, round to where it goes, and down to set it there. Each
+    // motion overlaps the next, as a crane driver works: the hook rises and
+    // falls during the swing wherever it is clear of what stands, so the long
+    // hoists between the yard and the top of the tower glide rather than plunge.
+    if (u < plan.PICK) crane.setPose(work.fetch.at(Math.min(1, u / FETCH_END)));
+    else crane.setPose(work.carry.at(Math.min(1, (u - plan.PICK) / (CARRY_END - plan.PICK))));
+    if (u < plan.PICK) return;
+    if (u < CARRY_END) this.hang(lift, this.load(lift));
+    else this.hang(lift, this.load(lift).lerp(lift.to, lift.landing((u - CARRY_END) / (1 - CARRY_END))));
+  }
+
+  /** The crane at rest: jib over the yard and hook up, as at the start and end of the day. */
+  private parked(): CranePose {
+    return { ...CRANE_PARK, hookY: this.scene.crew.crane.hookCeiling };
+  }
+
+  /** How the crane works lift `i`: fetching, carrying, and back to wait if there is time, each clear of what stands. */
+  private cranePlan(i: number): CranePlan {
+    const cached = this.cranePlans.get(i);
+    if (cached) return cached;
+    const crane = this.scene.crew.crane;
+    const lift = this.lifts[i]!;
+    const back = this.schedule.craneReturn;
+    const from = lift.from(lift.start);
+    const below = HOOK_HANG + lift.sling;
+    const pick = { ...crane.aim(from.x, from.z), hookY: from.y + below };
+    const release = { ...crane.aim(lift.to.x, lift.to.z), hookY: lift.to.y + DROP + below };
+    const previous = i > 0 ? this.lifts[i - 1]! : null;
+    const next = this.lifts[i + 1];
+    const chained = previous !== null && lift.start - (previous.start + previous.length) < back + 0.5;
+    const start = chained ? this.cranePlan(i - 1).release : previous ? this.waiting() : this.parked();
+    const top = Math.max(this.standingTop(lift.start), this.standingTop(lift.start + lift.length));
+    const empty = { extent: 0.3, below: HOOK_HANG + 0.1 };
+    const loaded = { extent: lift.extent, below: below + lift.reach };
+    // Back over the yard in the time there is before the next lift, unhurried.
+    const gap = next ? next.start - (lift.start + lift.length) : Infinity;
+    const result: CranePlan = {
+      release,
+      homeTime: Math.max(back, Math.min(10 / this.options.pace, gap - 0.5)),
+      fetch: this.craneRoute(start, pick, top, empty, 0.08 / FETCH_END, 0.4 / FETCH_END),
+      carry: this.craneRoute(pick, release, top, loaded, (0.56 - plan.PICK) / (CARRY_END - plan.PICK), (0.86 - plan.PICK) / (CARRY_END - plan.PICK)),
+      home: next && next.start - (lift.start + lift.length) < back + 0.5 ? null : this.craneRoute(release, next ? this.waiting() : this.parked(), top, empty, 0.15, 1),
+    };
+    this.cranePlans.set(i, result);
+    return result;
+  }
+
+  /** Between lifts the crane waits over the yard with the hook low, ready for the next. */
+  private waiting(): CranePose {
+    return { ...CRANE_PARK, hookY: DEPOT_TOP_Y + 2.4 + HOOK_HANG };
+  }
+
+  /** The top of what stands in the tower's footprint at `t`, the block below included, for the crane to clear. */
+  private standingTop(t: number): number {
+    const below = this.first ? SITE_Y : this.baseY + 0.6;
+    if (t < this.phases.frame.start) return below;
+    return Math.max(below, this.frameTop(t), this.scaffoldTop(t));
+  }
+
+  /**
+   * The crane's way from one pose to another as progress runs from 0 to 1:
+   * the jib swings between `h0` and `h1`, and the hook rises to a travel
+   * height, then falls to the end. Over the tower the load's foot must clear
+   * `top`, so the hook is up before the swing reaches the tower and comes
+   * down only once past it; clear of the tower it needs only clear the yard.
+   */
+  private craneRoute(a: CranePose, b: CranePose, top: number, load: { extent: number; below: number }, h0: number, h1: number): CraneRoute {
+    const crane = this.scene.crew.crane;
+    const swing = (s: number) => blendPose(a, b, phase(s, h0, h1));
+    const over = (pose: CranePose) => {
+      const x = crane.baseX + pose.trolley * Math.cos(pose.slew);
+      const z = crane.baseZ - pose.trolley * Math.sin(pose.slew);
+      const reach = TOWER_ZONE + load.extent;
+      return Math.abs(x) < reach && Math.abs(z) < reach;
+    };
+    const samples = 40;
+    let firstIn = -1;
+    let lastIn = -1;
+    for (let k = 0; k <= samples; k++) {
+      if (!over(swing(k / samples))) continue;
+      if (firstIn < 0) firstIn = k / samples;
+      lastIn = k / samples;
     }
+    const high = Math.max(a.hookY, b.hookY);
+    let travel: number;
+    let rise: number;
+    let fall: number;
+    if (firstIn < 0) {
+      // Clear of the tower all the way: just over the yard.
+      travel = Math.max(high, DEPOT_TOP_Y + 1.6 + load.below);
+      rise = fall = (h0 + h1) / 2;
+    } else {
+      travel = Math.max(high, top + 0.35 + load.below);
+      rise = firstIn === 0 ? Math.max(0.1, h0 + 0.1) : clamp01(firstIn - 0.03);
+      fall = lastIn === 1 ? Math.max(rise, h1 - 0.08) : Math.max(rise, Math.min(0.95, lastIn + 0.03));
+    }
+    travel = Math.min(crane.pivotY - 0.45, travel);
+    return {
+      at: (s: number) => {
+        const p = swing(s);
+        const hookY = s < rise ? a.hookY + (travel - a.hookY) * phase(s, 0, rise) : s < fall ? travel : travel + (b.hookY - travel) * phase(s, fall, 1);
+        return { slew: p.slew, trolley: p.trolley, hookY };
+      },
+    };
   }
 
   /** The load's lifting point where it hangs on the hook now. */
@@ -1606,12 +1835,6 @@ export class SiteScript {
   private hang(lift: Lift, at: THREE.Vector3): void {
     lift.cargo.place(at);
     this.scene.crew.crane.setSling(lift.cargo.rig(at));
-  }
-
-  /** Where the crane lets go of a lift's load. */
-  private releasePose(lift: Lift): CranePose {
-    const crane = this.scene.crew.crane;
-    return { ...crane.aim(lift.to.x, lift.to.z), hookY: lift.to.y + DROP + HOOK_HANG + lift.sling };
   }
 
   /**
