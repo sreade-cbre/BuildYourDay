@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { BLOCK_FOOTPRINT } from '../core/layout';
 import type { BlockId, SwatchToken } from '../core/model';
+import type { BuildState } from '../core/progress';
 import { materials } from './materials';
 
 // One time block as a box (spec section 8.3). The group sits at the block's
@@ -27,10 +28,22 @@ export interface BlockAppearance {
   hatched: boolean;
   /** Done: its end has passed today (spec 11.4). */
   weathered: boolean;
+  /**
+   * Where its construction stands by the clock: planned blocks are see
+   * through, and only a finished block has its roof.
+   */
+  stage: BuildState;
 }
 
 function sameAppearance(a: BlockAppearance, b: BlockAppearance): boolean {
-  return a.token === b.token && a.dimmed === b.dimmed && a.hovered === b.hovered && a.hatched === b.hatched && a.weathered === b.weathered;
+  return (
+    a.token === b.token &&
+    a.dimmed === b.dimmed &&
+    a.hovered === b.hovered &&
+    a.hatched === b.hatched &&
+    a.weathered === b.weathered &&
+    a.stage === b.stage
+  );
 }
 
 export class BlockMesh {
@@ -43,11 +56,11 @@ export class BlockMesh {
   /** Set when outside materials are in use, so the next appearance applies in full. */
   private appearanceStale = false;
   private heightValue = 1;
-  /** The fresh part above the now ring, for the block the current time runs through. */
+  /** The planned part above the now ring, for the block under way. */
   private upper: THREE.Mesh | null = null;
 
   constructor(readonly blockId: BlockId, token: SwatchToken) {
-    this.appearance = { token, dimmed: false, hovered: false, hatched: false, weathered: false };
+    this.appearance = { token, dimmed: false, hovered: false, hatched: false, weathered: false, stage: 'built' };
     this.body = new THREE.Mesh(bodyGeometry, materials.blockBody(token));
     this.body.castShadow = true;
     this.body.receiveShadow = true;
@@ -95,15 +108,22 @@ export class BlockMesh {
     // A hatched block reads as slateLight, whatever its category.
     const token: SwatchToken = next.hatched ? 'slateLight' : next.token;
     const weathered = next.weathered && !next.hatched;
+    // A block outside the window keeps its hatching whatever the clock says.
+    const stage: BuildState = next.hatched ? 'built' : next.stage;
     this.body.material = next.hatched
       ? materials.hatched(variant)
-      : weathered
-        ? materials.blockWeathered(token, variant)
-        : materials.blockBody(token, variant);
-    this.edges.material = materials.blockEdges(token, next.dimmed ? 'dimmed' : next.hovered ? 'hover' : 'normal');
+      : stage === 'planned'
+        ? materials.blueprint(token, variant)
+        : weathered
+          ? materials.blockWeathered(token, variant)
+          : materials.blockBody(token, variant);
+    const edgeVariant = next.dimmed ? 'dimmed' : next.hovered ? 'hover' : 'normal';
+    this.edges.material = stage === 'built' ? materials.blockEdges(token, edgeVariant) : materials.blueprintEdges(token, edgeVariant);
     this.cap.material = weathered ? materials.capWeathered(token, variant) : materials.blockCap(token, variant);
+    // The roof goes on when the block is finished.
+    this.cap.visible = stage === 'built';
     // Translucent boxes should not shade the blocks around them.
-    this.body.castShadow = !next.dimmed;
+    this.body.castShadow = !next.dimmed && stage !== 'planned';
     this.cap.castShadow = !next.dimmed;
   }
 
@@ -125,15 +145,15 @@ export class BlockMesh {
   }
 
   /**
-   * Draws the block in two parts for the block the current time runs
-   * through (spec 11.4): `below` for the body up to the now ring and `above`
-   * for a copy from the ring up. Both materials carry their clipping plane.
+   * Draws the block under way in two parts: `below` for what the crew has
+   * built, up to the now ring, and `above` for the plan still to build. Both
+   * materials carry their clipping plane.
    */
   setSplit(below: THREE.Material, above: THREE.Material): void {
     this.body.material = below;
     if (!this.upper) {
+      // The part above is still a plan, so it casts no shadow.
       this.upper = new THREE.Mesh(bodyGeometry, above);
-      this.upper.castShadow = true;
       this.upper.receiveShadow = true;
       this.root.add(this.upper);
     }

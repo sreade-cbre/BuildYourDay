@@ -26,6 +26,11 @@ export interface Claim {
   labelOpacity: number;
   /** Times whose gap outlines stay hidden while the job waits or plays. */
   quiet: TimeRange[];
+  /**
+   * For the block under way: how high the built part reaches, instead of
+   * the now ring, while the crew catches up with the time already passed.
+   */
+  reveal?: number;
   /** Runs when this claim becomes the first on its block. */
   onFirst?: () => void;
 }

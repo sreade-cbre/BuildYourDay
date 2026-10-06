@@ -32,17 +32,13 @@ type Durations = ReturnType<typeof phaseDurations>;
 
 /**
  * How far each phase runs before the next begins (spec 9.5 allows up to 20%
- * overlap). A single build overlaps a little where it reads naturally; a
- * rapid sequence, such as the sample day, takes nearly all of the allowance.
- * The roof always waits until the facade is nearly done.
+ * overlap): a little, where it reads naturally. The roof waits until the
+ * facade is done.
  */
-const OVERLAPS = {
-  usual: { survey: 0.9, prep: 0.9, foundation: 1, frame: 0.85, scaffold: 1, cladding: 1, roof: 0.9 },
-  tight: { survey: 0.8, prep: 0.8, foundation: 0.8, frame: 0.8, scaffold: 0.8, cladding: 0.9, roof: 0.8 },
-} as const;
+const OVERLAP = { survey: 0.9, prep: 0.9, foundation: 1, frame: 0.85, scaffold: 1, cladding: 1, roof: 0.9 } as const;
 
-function layout(d: Durations, tight: boolean) {
-  const o = OVERLAPS[tight ? 'tight' : 'usual'];
+function layout(d: Durations) {
+  const o = OVERLAP;
   const survey = 0;
   const prep = survey + d.survey * o.survey;
   const foundation = prep + d.prep * o.prep;
@@ -58,14 +54,14 @@ function layout(d: Durations, tight: boolean) {
  * Phase start times and the total. Very long blocks compress their
  * foundation, frame, and cladding so no build passes MAX_BUILD_SECONDS.
  */
-export function phaseSchedule(height: number, first: boolean, tight = false) {
+export function phaseSchedule(height: number, first: boolean) {
   const d = phaseDurations(height, first);
-  const schedule = layout(d, tight);
+  const schedule = layout(d);
   if (schedule.total <= MAX_BUILD_SECONDS) return schedule;
-  const o = OVERLAPS[tight ? 'tight' : 'usual'];
+  const o = OVERLAP;
   const scaled = d.foundation * o.foundation + d.frame * o.frame + d.cladding * o.cladding;
   const k = (MAX_BUILD_SECONDS - (schedule.total - scaled)) / scaled;
-  return layout({ ...d, foundation: d.foundation * k, frame: d.frame * k, cladding: d.cladding * k }, tight);
+  return layout({ ...d, foundation: d.foundation * k, frame: d.frame * k, cladding: d.cladding * k });
 }
 
 /** Crew size from spec 10.1; a block under 15 minutes gets one worker (spec 18). */

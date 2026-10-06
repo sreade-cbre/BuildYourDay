@@ -15,7 +15,7 @@ import { Path } from '../path';
 import type { Timeline } from '../Timeline';
 import { endJob } from './build';
 import { Choreography, blendPose, parkedPose } from './choreography';
-import { standingBlocks, standingTop, surfaceBelow, titleOf, type JobScene } from './scene';
+import { solidBlocks, standingTop, surfaceBelow, titleOf, type JobScene } from './scene';
 import { CALM_SECONDS, DEMOLISH, rubbleGrid } from './schedule';
 
 // Demolish (spec 11.1): guard rails on the roof below, the crane swings the
@@ -50,7 +50,7 @@ export function demolishJob(scene: JobScene, block: Block, calm: boolean): Job {
   const pose = tower.poseFor(block);
   // The removed block stands as a copy until its demolition plays.
   const proxy = new BlockMesh(block.id, token);
-  proxy.setAppearance({ token, dimmed: false, hovered: false, hatched: !isInWindow(block, scene.settings()), weathered: false });
+  proxy.setAppearance({ token, dimmed: false, hovered: false, hatched: !isInWindow(block, scene.settings()), weathered: false, stage: 'built' });
   proxy.setBaseY(pose.baseY);
   proxy.setHeight(pose.height);
   proxy.root.visible = false;
@@ -64,8 +64,9 @@ export function demolishJob(scene: JobScene, block: Block, calm: boolean): Job {
       scene.requestRender();
     },
   });
-  // The last block's site stays as it is until the demolition clears it.
-  const site = scene.blocks().length === 0 ? holds.claimSite('freeze') : null;
+  // The last block that stands keeps its site as it is until the demolition
+  // clears it; planned blocks need no site.
+  const site = scene.blocks().every((b) => scene.stateOf(b) === 'planned') ? holds.claimSite('freeze') : null;
   return {
     label: `Demolishing ${titleOf(block)}`,
     start: () => {
@@ -90,7 +91,7 @@ function demolishTimeline(scene: JobScene, block: Block, pose: BlockPose, proxy:
   const height = pose.height;
   const top = base + height;
   const surface = surfaceBelow(scene, base);
-  const overhead = standingBlocks(scene).some((b) => tower.poseFor(b).baseY >= top - 1e-6);
+  const overhead = solidBlocks(scene).some((b) => tower.poseFor(b).baseY >= top - 1e-6);
 
   // The job takes over the slab so it can clear it at the end.
   if (site) {

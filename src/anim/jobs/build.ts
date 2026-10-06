@@ -2,10 +2,11 @@ import * as THREE from 'three';
 import { BLOCK_FOOTPRINT, UNITS_PER_MINUTE } from '../../core/layout';
 import type { Block } from '../../core/model';
 import { rngFromString } from '../../core/rng';
-import { HOOK_HANG } from '../../scene/crew/Crane';
+import { HOOK_HANG, type CranePose } from '../../scene/crew/Crane';
 import { BACK_LANE_Z, CRANE_PARK, HOMES, SITE_Y, STACK, WORKER_GATE, WORK_SPOTS } from '../../scene/crew/Crew';
 import type { ArmPose } from '../../scene/crew/Excavator';
 import { ARM_REST } from '../../scene/crew/Excavator';
+import type { SiteKit } from '../../scene/crew/LiveKit';
 import { BEAM_SIZE } from '../../scene/crew/props';
 import type { ScaffoldFace } from '../../scene/crew/Scaffold';
 import type { Worker } from '../../scene/crew/Worker';
@@ -16,7 +17,7 @@ import { easeInOutCubic, easeOutBack, easeOutBounce, easeOutCubic, linear } from
 import { Path, angleBetween, type Point2 } from '../path';
 import { Timeline } from '../Timeline';
 import { Choreography, LANE, parkedPose } from './choreography';
-import { hasBlocksAbove, standingBlocks, standingTop, titleOf, type JobScene } from './scene';
+import { hasBlocksAbove, solidBlocks, solidTop, titleOf, type JobScene } from './scene';
 import { ROOF_LEAD, ROOF_LIFT, craneBatch, crewSize, panelLifts, phaseSchedule } from './schedule';
 
 // The build job (spec 9.4): survey, site prep, foundation, frame, scaffold,
@@ -31,6 +32,13 @@ import { ROOF_LEAD, ROOF_LIFT, craneBatch, crewSize, panelLifts, phaseSchedule }
 // blocks stand above the slot, nothing can drop in from overhead: beams and
 // the roof arrive beside the tower and slide in, and panels hang outside the
 // scaffold.
+//
+// Blocks are built in real time, so the day's builds come in two parts. When
+// a block's time starts, its start plays everything up to the facade, which
+// then rises with the now ring while the block's time runs (see live.ts).
+// When its time is up, its finish puts the roof on, strikes the scaffold, and
+// sends the crew home. The full build in one go remains for the animation
+// speed preview.
 
 const deg = (d: number) => (d * Math.PI) / 180;
 /** Panels hang 0.07 in front of the front face, inside the scaffold. */
@@ -39,6 +47,11 @@ const PANEL_Z = BLOCK_FOOTPRINT / 2 + 0.07;
 const PANEL_Z_OUTSIDE = 2.45;
 /** The walkway along the tower's left side, to and from the hoist. */
 const HOIST_WALK_X = -3.05;
+/** The crane folds away over this long once its lifts for a start are done. */
+const FOLD_SECONDS = 0.5;
+
+/** Where up to three workers stand on the scaffold: the face and how far along it. */
+export const SCAFFOLD_SPOTS: ReadonlyArray<readonly [ScaffoldFace, number]> = [['front', -0.45], ['left', 0.35], ['front', 0.55]];
 
 /** Excavator arm through one dig cycle (spec 10.3), c in [0, 1). */
 function digPose(c: number): ArmPose {
@@ -59,26 +72,110 @@ export function endJob(scene: JobScene): void {
 }
 
 /**
- * Builds a new block. It stays hidden, with its label at 45%, until its
- * build plays. The first block of an empty day also takes the site, so the
- * plot keeps its grass until the bulldozer clears it.
+ * Where a block's site stands, shared by its full build, its start, the work
+ * while its time runs, and its finish, so each one picks up exactly where
+ * the one before left off.
+ */
+export interface SiteLayout {
+  block: Block;
+  baseY: number;
+  height: number;
+  top: number;
+  floors: number;
+  floorHeight: number;
+  /** Plank levels on the scaffold; very tall blocks group floors. */
+  levels: number;
+  /** Nothing else stands on the day, so the site is prepared from grass. */
+  first: boolean;
+  /** Solid blocks stand over the slot, so loads come in from the side. */
+  covered: boolean;
+  /** The highest roof built or being built; loads pass through plans. */
+  towerTop: number;
+  /** High enough that workers ride the hoist rather than step down. */
+  aloft: boolean;
+  hoistTop: number;
+  surveyor: Worker;
+  builders: Worker[];
+  /** Up to three builders on the scaffold, at SCAFFOLD_SPOTS. */
+  scaffolders: Worker[];
+  /** A block under 15 minutes has one worker, who surveys and builds. */
+  solo: boolean;
+  tripod: Point2;
+  /** Where the surveyor stands behind the tripod. */
+  stand: { x: number; z: number; heading: number };
+  /** The block's seeded generator, past the tripod's jitter. */
+  rng: () => number;
+}
+
+export function siteLayout(scene: JobScene, block: Block, kit: SiteKit, first: boolean): SiteLayout {
+  const { baseY, height } = scene.tower.poseFor(block);
+  const top = baseY + height;
+  const floors = Math.max(1, Math.round(height / (scene.settings().slotMinutes * UNITS_PER_MINUTE)));
+  const towerTop = Math.max(top, solidTop(scene, block.id));
+  const workers = kit.workers.slice(0, crewSize(block.end - block.start));
+  const surveyor = workers[0]!;
+  const builders = workers.length > 1 ? workers.slice(1) : [surveyor];
+  const rng = rngFromString(block.id);
+  const jitter = (rng() - 0.5) * 0.1;
+  const tripod = { x: 2.45 + jitter, z: 2.45 - jitter };
+  return {
+    block,
+    baseY,
+    height,
+    top,
+    floors,
+    floorHeight: height / floors,
+    levels: Math.max(1, Math.min(floors, 24)),
+    first,
+    covered: hasBlocksAbove(scene, block, block.id),
+    towerTop,
+    aloft: !first && baseY > 0.5,
+    hoistTop: Math.max(baseY + 1.2, towerTop),
+    surveyor,
+    builders,
+    scaffolders: builders.slice(0, 3),
+    solo: workers.length === 1,
+    tripod,
+    stand: { x: tripod.x + 0.33, z: tripod.z + 0.33, heading: Math.atan2(-1, -1) },
+    rng,
+  };
+}
+
+/** True when a build of this block would be the day's first, with site prep from grass. */
+export function isFirstBuild(scene: JobScene, block: Block): boolean {
+  return scene.holds.siteMode === null && solidBlocks(scene, block.id).length === 0;
+}
+
+/** The scaffold level the crew works on once a share of the facade is up. */
+export function levelFor(layout: SiteLayout, progress: number): number {
+  return Math.min(layout.levels - 1, Math.max(0, Math.floor(progress * layout.levels)));
+}
+
+/** World height of the top of a floor's beam ring. */
+export function ringY(layout: SiteLayout, ring: number): number {
+  return layout.baseY + (ring + 1) * layout.floorHeight;
+}
+
+/**
+ * Builds a new block in one go: the full sequence, used by the animation
+ * speed preview. It stays hidden, with its label at 45%, until its build
+ * plays. The first block of an empty day also takes the site, so the plot
+ * keeps its grass until the bulldozer clears it.
  */
 export interface BuildOptions {
-  /** Playback speed instead of the setting, for an undo or a rapid sequence. */
+  /** Playback speed instead of the setting. */
   speed?: number;
-  /** Part of a rapid sequence: phases overlap as much as spec 9.5 allows. */
-  tight?: boolean;
 }
 
 export function buildJob(scene: JobScene, block: Block, options: BuildOptions = {}): Job {
   const { holds } = scene;
   const claim = holds.claim(block.id, { pose: null, labelOpacity: HELD_LABEL_OPACITY, quiet: [] });
-  const first = holds.siteMode === null && standingBlocks(scene, block.id).length === 0;
+  const first = isFirstBuild(scene, block);
   const site = first ? holds.claimSite('build') : null;
   return {
     label: `Building ${titleOf(block)}`,
     speed: options.speed,
-    start: () => createBuildTimeline(scene, block, claim, first, options.tight ?? false),
+    start: () => layoutBuild(scene, block, claim, first, scene.crew, null),
     end: () => {
       holds.release(block.id, claim);
       if (site) holds.releaseSite(site);
@@ -87,36 +184,50 @@ export function buildJob(scene: JobScene, block: Block, options: BuildOptions = 
   };
 }
 
-function createBuildTimeline(scene: JobScene, block: Block, claim: Claim, first: boolean, tight: boolean): Timeline {
-  const { crew, tower, ground } = scene;
-  const { props, scaffold, crane, dust, bulldozer, excavator, mixer, hoist, rail } = crew;
-  const settings = scene.settings();
-  const rng = rngFromString(block.id);
+/**
+ * The start of a block whose time has come: survey, site prep, foundation,
+ * frame, and scaffold, then the facade catches up to `revealTo`, how far the
+ * block's time has already run. The block shows as its plan meanwhile, built
+ * up to `claim.reveal`.
+ */
+export function startTimeline(scene: JobScene, block: Block, claim: Claim, first: boolean, kit: SiteKit, revealTo: number): Timeline {
+  return layoutBuild(scene, block, claim, first, kit, { revealTo });
+}
+
+function layoutBuild(
+  scene: JobScene,
+  block: Block,
+  claim: Claim,
+  first: boolean,
+  kit: SiteKit,
+  start: { revealTo: number } | null,
+): Timeline {
+  const { crew, ground } = scene;
+  const { crane, bulldozer, excavator, mixer } = crew;
+  const { props, scaffold, dust, hoist, rail } = kit;
+  const full = start === null;
   const c = new Choreography(crew);
 
-  const { baseY, height } = tower.poseFor(block);
-  const top = baseY + height;
-  const floors = Math.max(1, Math.round(height / (settings.slotMinutes * UNITS_PER_MINUTE)));
-  const floorHeight = height / floors;
-  const schedule = phaseSchedule(height, first, tight);
+  const L = siteLayout(scene, block, kit, first);
+  const { baseY, height, top, floors, floorHeight, covered, towerTop, surveyor, builders, solo, stand, rng } = L;
+  const schedule = phaseSchedule(height, first);
   const { d, at, total } = schedule;
-  const minutes = block.end - block.start;
-  // With blocks standing over the slot, loads come in from the side.
-  const covered = hasBlocksAbove(scene, block, block.id);
   const via = covered ? LANE : undefined;
-  const towerTop = Math.max(top, standingTop(scene, block.id));
-  // High enough that workers ride the hoist rather than step down.
-  const aloft = !first && baseY > 0.5;
 
   crew.park();
+  if (kit !== crew) kit.park();
   props.setup(scene.token(block), baseY, height);
   scaffold.layout(baseY, height, floors);
-  scene.keepInFrame(towerTop);
+  // The camera moves only if the new roof is out of view (spec 9.5).
+  scene.keepInFrame(top);
 
-  const workers = crew.workers.slice(0, crewSize(minutes));
-  const surveyor = workers[0]!;
-  const builders = workers.length > 1 ? workers.slice(1) : [surveyor];
-  const solo = workers.length === 1;
+  // A start ends once the facade has caught up with the clock and the crane
+  // and machines are home; the work carries on from there.
+  const shown = start ? Math.min(1, Math.max(0, (start.revealTo - baseY) / height)) : 0;
+  const catchUp = shown > 1e-3 ? Math.max(0.4, d.cladding * shown) : 0;
+  const leave = at.frame + d.frame * 0.3;
+  const startEnd = Math.max(at.cladding + catchUp, at.frame + d.frame + FOLD_SECONDS, leave + 0.55, at.cladding + 0.1);
+  const end = full ? total : startEnd;
 
   // The mast grows, if it must, so the jib clears the tower (spec 10.4).
   const mastFrom = crane.pivotY;
@@ -132,9 +243,7 @@ function createBuildTimeline(scene: JobScene, block: Block, claim: Claim, first:
   // Phase 0: survey. The surveyor walks in, sets the tripod at the front
   // corner, and the footprint outline draws itself where the block will
   // stand.
-  const jitter = (rng() - 0.5) * 0.1;
-  const tripod = { x: 2.45 + jitter, z: 2.45 - jitter };
-  const stand = { x: tripod.x + 0.33, z: tripod.z + 0.33, heading: Math.atan2(-1, -1) };
+  const { tripod } = L;
   c.walk(surveyor, [WORKER_GATE, { x: stand.x, z: WORKER_GATE.z }, stand], at.survey, 0.3, { face: stand.heading });
   c.step(at.survey + 0.25, 0.12, (t) => {
     props.tripod.visible = true;
@@ -144,7 +253,7 @@ function createBuildTimeline(scene: JobScene, block: Block, claim: Claim, first:
   props.setOutlineY((first ? PLOT_TOP_Y : baseY) + 0.012);
   c.step(at.survey + 0.2, 0.3, (t) => props.setOutline(t), linear);
   // A lone worker stops surveying to go and build.
-  const surveyUntil = solo ? (first ? at.foundation : at.prep) : at.cleanup;
+  const surveyUntil = solo ? (first ? at.foundation : at.prep) : full ? at.cleanup : end;
   c.hold(surveyor, 'survey', at.survey + 0.3, surveyUntil - (at.survey + 0.3), { ...stand, y: SITE_Y });
 
   const screeders = builders.slice(0, 2);
@@ -194,8 +303,14 @@ function createBuildTimeline(scene: JobScene, block: Block, claim: Claim, first:
     const mixerIn = new Path([HOMES.mixer, WORK_SPOTS.mixer]);
     const mixerStart = at.foundation + d.foundation * 0.35;
     c.drive(mixer, mixerIn, mixerStart, d.foundation * 0.3, true);
-    const drumUntil = at.cleanup + d.cleanup;
+    // In a full build the machines stay until cleanup; a start sends them
+    // home once the slab is poured, since the work ahead takes hours.
+    const drumUntil = full ? at.cleanup + d.cleanup : leave;
     c.step(mixerStart, drumUntil - mixerStart, (t) => mixer.setDrum(t >= 1 ? 0 : (t * (drumUntil - mixerStart) * Math.PI * 2) / 1.5), linear);
+    if (!full) {
+      c.drive(mixer, mixerIn.reversed(), leave, 0.45);
+      c.drive(excavator, exIn.reversed(), leave + 0.05, 0.5, true);
+    }
     const padScales = [0, 0, 0, 0];
     for (let i = 0; i < 4; i++) {
       c.step(at.foundation + d.foundation * (0.5 + 0.04 * i), d.foundation * 0.16, (t) => {
@@ -219,8 +334,7 @@ function createBuildTimeline(scene: JobScene, block: Block, claim: Claim, first:
     // Phase 1, stacked: a guard rail rises around the roof below, and two
     // workers carry planks to the hoist and ride it up to the new floor.
     c.step(at.prep, 0.2, (t) => rail.show(baseY, t), easeOutCubic);
-    const hoistTop = Math.max(baseY + 1.2, towerTop);
-    c.step(at.survey, 0.2, (t) => hoist.setMast(SITE_Y, hoistTop, t), easeOutCubic);
+    c.step(at.survey, 0.2, (t) => hoist.setMast(SITE_Y, L.hoistTop, t), easeOutCubic);
     c.step(at.survey, 0, () => hoist.setCage(SITE_Y));
     const boardAt = solo ? at.prep + 0.35 : at.prep + d.prep * 0.3;
     const rideEnd = at.foundation + d.foundation * 0.3;
@@ -283,15 +397,14 @@ function createBuildTimeline(scene: JobScene, block: Block, claim: Claim, first:
   const batch = craneBatch(floors, d.frame);
   const trips = Math.ceil(floors / batch);
   const tripLength = d.frame / trips;
-  const ringY = (ring: number) => baseY + (ring + 1) * floorHeight;
   let pose = parked();
   for (let i = 0; i < trips; i++) {
     const r0 = i * batch;
     const r1 = Math.min(floors, (i + 1) * batch);
-    const start = at.frame + i * tripLength;
-    c.step(start + tripLength * 0.1, tripLength * 0.6, (t) => props.setColumns(baseY, baseY + (r0 + (r1 - r0) * t) * floorHeight));
+    const tripStart = at.frame + i * tripLength;
+    c.step(tripStart + tripLength * 0.1, tripLength * 0.6, (t) => props.setColumns(baseY, baseY + (r0 + (r1 - r0) * t) * floorHeight));
     const finalTop = new THREE.Vector3(0, baseY + r1 * floorHeight, 0);
-    pose = c.craneMove(stackPoint, finalTop, start, tripLength, pose, travelY, {
+    pose = c.craneMove(stackPoint, finalTop, tripStart, tripLength, pose, travelY, {
       pick: () => props.setRingCount(r1),
       carry: (point) => {
         for (let ring = r0; ring < r1; ring++) props.setRing(ring, point.x, point.y - 0.12 * (r1 - 1 - ring), point.z);
@@ -299,7 +412,7 @@ function createBuildTimeline(scene: JobScene, block: Block, claim: Claim, first:
       land: (from, t) => {
         for (let ring = r0; ring < r1; ring++) {
           const carried = from.y - 0.12 * (r1 - 1 - ring);
-          props.setRing(ring, from.x * (1 - t), carried + (ringY(ring) - carried) * t, from.z * (1 - t));
+          props.setRing(ring, from.x * (1 - t), carried + (ringY(L, ring) - carried) * t, from.z * (1 - t));
         }
       },
     }, covered ? easeOutCubic : easeOutBounce, via);
@@ -307,37 +420,185 @@ function createBuildTimeline(scene: JobScene, block: Block, claim: Claim, first:
 
   // Phase 4: scaffold, bottom to top, then up to three workers on the planks.
   c.step(at.scaffold, d.scaffold, (t) => scaffold.revealTo(baseY + (height + 0.05) * t), linear);
-  const faces: Array<[ScaffoldFace, number]> = [['front', -0.45], ['left', 0.35], ['front', 0.55]];
-  const scaffolders = builders.slice(0, 3);
-  const levels = Math.max(1, Math.min(floors, 24));
-  const levelAt = (time: number) => Math.min(levels - 1, Math.floor((Math.max(0, time - at.cladding) / d.cladding) * levels));
   const floorTime = d.cladding / floors;
   const hammerCycle = floorTime * Math.max(1, Math.ceil(0.25 / floorTime));
   // With blocks overhead the scaffold comes down first, so the roof can slide in.
   const strikeStart = covered ? at.roof : at.roof + 0.3;
-  scaffolders.forEach((worker, j) => {
-    const [face, along] = faces[j]!;
+  // How much of the facade is up at a time: during cladding in a full build,
+  // or while a start catches up with the clock.
+  const facadeAt = (time: number) =>
+    full ? Math.max(0, time - at.cladding) / d.cladding : catchUp > 0 ? shown * Math.min(1, Math.max(0, time - at.cladding) / catchUp) : 0;
+  const planksUntil = full ? strikeStart : end;
+  L.scaffolders.forEach((worker, j) => {
+    const [face, along] = SCAFFOLD_SPOTS[j]!;
     const from = at.scaffold + d.scaffold * 0.5 + 0.1 * j;
-    c.step(from, strikeStart - from, (t) => {
-      const time = from + t * (strikeStart - from);
-      const spot = scaffold.standPoint(face, levelAt(time), along);
+    c.step(from, planksUntil - from, (t) => {
+      const time = from + t * (planksUntil - from);
+      const spot = scaffold.standPoint(face, levelFor(L, facadeAt(time)), along);
       worker.show();
       worker.place(spot.x, spot.y, spot.z, spot.heading);
-      if (time < at.cladding) worker.setAnimationAt('idle', time - from);
+      if (time < at.cladding || (!full && time >= at.cladding + catchUp)) worker.setAnimationAt('idle', time - from);
       else worker.setAnimation('hammer', (time - at.cladding) / hammerCycle);
     }, linear);
+  });
+
+  if (full) {
+    // Phase 5: cladding. The facade rises floor by floor behind the scaffold
+    // with a hammer strike and a puff of dust as each floor completes. The
+    // crane brings each band of floors a panel that fades as the plane passes it.
+    const revealAt = (t: number) => {
+      // Once complete, lift the plane clear of the top face so no fragment of it clips.
+      if (t >= 1) return Infinity;
+      const progress = Math.max(0, t) * floors;
+      const floor = Math.min(floors - 1, Math.floor(progress));
+      return baseY + (floor + easeInOutCubic(progress - floor)) * floorHeight;
+    };
+    let covered0 = 0;
+    c.step(at.cladding, d.cladding, (t) => {
+      const reveal = revealAt(t);
+      props.setReveal(reveal);
+      // The facade retires the frame it covers. The block body draws with a
+      // polygon offset, so a beam slightly inside it would show through at grazing angles.
+      props.setColumns(Math.min(reveal, top), top);
+      while (covered0 < floors && ringY(L, covered0) + BEAM_SIZE / 2 <= reveal) props.hideRing(covered0++);
+    }, linear);
+    const puffEvery = Math.max(1, Math.ceil(floors / 12));
+    const panelZ = covered ? PANEL_Z_OUTSIDE : PANEL_Z;
+    for (let f = 1; f <= floors; f++) {
+      if (f % puffEvery !== 0 && f !== floors) continue;
+      c.at(at.cladding + f * floorTime, () => dust.puff(new THREE.Vector3((rng() - 0.5) * 2, baseY + f * floorHeight, 2.25), rng, 24, 0.5));
+    }
+    // Each lift lands as the plane reaches its band (see panelLifts).
+    panelLifts(floors, schedule).forEach(({ r0, r1, start: liftStart, lands, passes }, i) => {
+      const bottom = baseY + r0 * floorHeight;
+      const panelTop = baseY + r1 * floorHeight;
+      const panelHeight = panelTop - bottom;
+      const center = new THREE.Vector3(0, (bottom + panelTop) / 2, panelZ);
+      pose = c.craneMove(stackPoint, center, liftStart, lands - liftStart, pose, travelY, {
+        pick: () => props.setPanel(i, stackPoint.x, stackPoint.y, stackPoint.z, panelHeight, 1),
+        carry: (point) => props.setPanel(i, point.x, point.y - panelHeight / 2, point.z, panelHeight, 1),
+        land: (from, t) => {
+          const y = from.y - panelHeight / 2;
+          props.setPanel(i, from.x + (center.x - from.x) * t, y + (center.y - y) * t, from.z + (center.z - from.z) * t, panelHeight, 1);
+        },
+      }, easeOutCubic);
+      // The plate fades out as the plane passes it, from wherever the plane is
+      // when it lands. Its own step, so a long jump still ends it hidden.
+      const from = Math.max(bottom, revealAt((lands - at.cladding) / d.cladding));
+      c.step(lands, passes - lands, (t) => {
+        const reveal = t >= 1 ? Infinity : revealAt((lands + t * (passes - lands) - at.cladding) / d.cladding);
+        const left = Math.min(1, Math.max(0, (panelTop - reveal) / Math.max(1e-6, panelTop - from)));
+        props.setPanel(i, center.x, center.y, center.z, panelHeight, left);
+      }, linear);
+    });
+
+    addFinish(c, scene, L, kit, {
+      lift: at.roof - ROOF_LEAD,
+      strike: strikeStart,
+      cleanup: at.cleanup,
+      cleanupLength: d.cleanup,
+      level: levelFor(L, facadeAt(strikeStart)),
+      fadeIn: claim,
+      parked,
+      stackPoint,
+      travelY,
+    }, pose);
+  } else {
+    // The facade catches up with the time already gone, floor by floor,
+    // retiring the frame it covers, with a puff of dust as each floor is done.
+    const target = baseY + height * shown;
+    let covered0 = 0;
+    c.step(at.cladding, catchUp, (t) => {
+      const reveal = baseY + (target - baseY) * t;
+      claim.reveal = reveal;
+      props.setColumns(Math.min(reveal, top), top);
+      while (covered0 < floors && ringY(L, covered0) + BEAM_SIZE / 2 <= reveal) props.hideRing(covered0++);
+    }, linear);
+    const done = Math.floor(shown * floors + 1e-9);
+    const puffEvery = Math.max(1, Math.ceil(done / 8));
+    for (let f = 1; f <= done; f++) {
+      if (f % puffEvery !== 0 && f !== done) continue;
+      c.at(at.cladding + (catchUp * f) / (shown * floors), () => dust.puff(new THREE.Vector3((rng() - 0.5) * 2, baseY + f * floorHeight, 2.25), rng, 24, 0.5));
+    }
+    // With the frame up, the crane folds away until the roof is due.
+    const lastLift = pose;
+    c.step(at.frame + d.frame, FOLD_SECONDS, (t) => {
+      const target = parked();
+      crane.setPose({
+        slew: lastLift.slew + angleBetween(lastLift.slew, target.slew) * t,
+        trolley: lastLift.trolley + (target.trolley - lastLift.trolley) * t,
+        hookY: lastLift.hookY + (target.hookY - lastLift.hookY) * t,
+      });
+    });
+  }
+
+  // Hold the final frame until the timeline's end so the job lasts its full length.
+  c.step(0, end, () => {}, linear);
+  return c.tl;
+}
+
+/** When the parts of a finish happen, and what it starts from. */
+interface FinishTimes {
+  /** The roof lift sets off. */
+  lift: number;
+  /** The scaffold starts coming down. */
+  strike: number;
+  cleanup: number;
+  cleanupLength: number;
+  /** The scaffold level the crew is on when the strike begins. */
+  level: number;
+  /** A full build fades in the block's edges and this claim's label; a finish already shows them. */
+  fadeIn: Claim | null;
+  parked: () => CranePose;
+  stackPoint: THREE.Vector3;
+  travelY: number;
+}
+
+/**
+ * Phases 6 and 7: roof and strike, then cleanup. The crane sets the cap with
+ * a small overshoot, or slides it in from beside the tower when blocks stand
+ * overhead; the scaffold comes down top to bottom and the guard rail goes;
+ * the crew comes down and leaves, and the crane folds away unless more work
+ * is waiting.
+ */
+function addFinish(c: Choreography, scene: JobScene, L: SiteLayout, kit: SiteKit, times: FinishTimes, from: CranePose): void {
+  const { crew } = scene;
+  const { crane, excavator, mixer } = crew;
+  const { props, scaffold, dust, hoist, rail } = kit;
+  const { baseY, height, top, first, covered, aloft, surveyor, stand, rng } = L;
+  const { strike, cleanup, cleanupLength, level } = times;
+  const via = covered ? LANE : undefined;
+
+  const cap = props.cladding.cap;
+  const capLocal = (point: THREE.Vector3) => cap.position.set(point.x, point.y - baseY, point.z);
+  const pose = c.craneMove(times.stackPoint, new THREE.Vector3(0, top, 0), times.lift, ROOF_LIFT, from, times.travelY, {
+    pick: () => {
+      cap.visible = true;
+      capLocal(times.stackPoint);
+    },
+    carry: (point) => capLocal(point),
+    land: (point, t) => cap.position.set(point.x * (1 - t), point.y - baseY + (height + 0.002 - (point.y - baseY)) * t, point.z * (1 - t)),
+  }, covered ? easeOutCubic : easeOutBack, via);
+  c.step(strike, 0.4, (t) => {
+    if (t >= 1) scaffold.hide();
+    else scaffold.revealTo(baseY + (height + 0.05) * (1 - t));
+  }, linear);
+  if (!first) c.step(strike, 0.2, (t) => rail.show(baseY, 1 - t), easeInOutCubic);
+
+  L.scaffolders.forEach((worker, j) => {
+    const [face, along] = SCAFFOLD_SPOTS[j]!;
     if (aloft) {
       descendByHoist(worker, face, along, j);
-    } else {
-      // Down off the scaffold as it strikes.
-      c.step(strikeStart, 0.15, (t) => {
-        const spot = scaffold.standPoint(face, levelAt(strikeStart), along);
-        const ground = groundSpot(face, along);
-        worker.place(spot.x + (ground.x - spot.x) * t, spot.y + (SITE_Y - spot.y) * t, spot.z + (ground.z - spot.z) * t, spot.heading);
-        worker.setAnimationAt('idle', t);
-      });
-      c.hold(worker, 'idle', strikeStart + 0.15, at.cleanup - strikeStart - 0.15, { ...groundSpot(face, along), y: SITE_Y, heading: faceHeading(face) });
+      return;
     }
+    // Down off the scaffold as it strikes.
+    c.step(strike, 0.15, (t) => {
+      const spot = scaffold.standPoint(face, level, along);
+      const ground = groundSpot(face, along);
+      worker.place(spot.x + (ground.x - spot.x) * t, spot.y + (SITE_Y - spot.y) * t, spot.z + (ground.z - spot.z) * t, spot.heading);
+      worker.setAnimationAt('idle', t);
+    });
+    c.hold(worker, 'idle', strike + 0.15, cleanup - strike - 0.15, { ...groundSpot(face, along), y: SITE_Y, heading: faceHeading(face) });
   });
 
   /**
@@ -345,136 +606,120 @@ function createBuildTimeline(scene: JobScene, block: Block, claim: Claim, first:
    * has come up to meet them, and rides it down to the ground.
    */
   function descendByHoist(worker: Worker, face: ScaffoldFace, along: number, slot: number): void {
-    const level = scaffold.standPoint(face, levelAt(strikeStart), along);
+    const spotOnPlank = scaffold.standPoint(face, level, along);
     const spot = hoist.riderSpot(slot);
-    const corner: Point2[] = face === 'front' ? [{ x: level.x, z: level.z }, { x: -2.18, z: 2.18 }] : [{ x: level.x, z: level.z }];
-    c.walk(worker, [...corner, { x: -2.18, z: spot.z }, spot], strikeStart, 0.16, { y: level.y, face: Math.PI / 2 });
-    c.step(strikeStart + 0.16, at.cleanup - strikeStart - 0.16, (t) => {
+    const corner: Point2[] = face === 'front' ? [{ x: spotOnPlank.x, z: spotOnPlank.z }, { x: -2.18, z: 2.18 }] : [{ x: spotOnPlank.x, z: spotOnPlank.z }];
+    c.walk(worker, [...corner, { x: -2.18, z: spot.z }, spot], strike, 0.16, { y: spotOnPlank.y, face: Math.PI / 2 });
+    c.step(strike + 0.16, cleanup - strike - 0.16, (t) => {
       worker.show();
-      worker.place(spot.x, level.y + (SITE_Y - level.y) * easeInOutCubic(t), spot.z, Math.PI / 2);
+      worker.place(spot.x, spotOnPlank.y + (SITE_Y - spotOnPlank.y) * easeInOutCubic(t), spot.z, Math.PI / 2);
       worker.setAnimationAt('ride', t);
     }, linear);
   }
   if (aloft) {
-    const levelY = scaffold.standPoint('left', levelAt(strikeStart), 0).y;
-    c.step(at.roof - 0.1, strikeStart - at.roof + 0.1, (t) => hoist.setCage(baseY + (levelY - baseY) * t));
-    c.step(strikeStart + 0.16, at.cleanup - strikeStart - 0.16, (t) => hoist.setCage(levelY + (SITE_Y - levelY) * easeInOutCubic(t)), linear);
+    const levelY = scaffold.standPoint('left', level, 0).y;
+    c.step(times.lift, strike - times.lift, (t) => hoist.setCage(baseY + (levelY - baseY) * t));
+    c.step(strike + 0.16, cleanup - strike - 0.16, (t) => hoist.setCage(levelY + (SITE_Y - levelY) * easeInOutCubic(t)), linear);
   }
-
-  // Phase 5: cladding. The facade rises floor by floor behind the scaffold
-  // with a hammer strike and a puff of dust as each floor completes. The
-  // crane brings each band of floors a panel that fades as the plane passes it.
-  const revealAt = (t: number) => {
-    // Once complete, lift the plane clear of the top face so no fragment of it clips.
-    if (t >= 1) return Infinity;
-    const progress = Math.max(0, t) * floors;
-    const floor = Math.min(floors - 1, Math.floor(progress));
-    return baseY + (floor + easeInOutCubic(progress - floor)) * floorHeight;
-  };
-  let covered0 = 0;
-  c.step(at.cladding, d.cladding, (t) => {
-    const reveal = revealAt(t);
-    props.setReveal(reveal);
-    // The facade retires the frame it covers. The block body draws with a
-    // polygon offset, so a beam slightly inside it would show through at grazing angles.
-    props.setColumns(Math.min(reveal, top), top);
-    while (covered0 < floors && ringY(covered0) + BEAM_SIZE / 2 <= reveal) props.hideRing(covered0++);
-  }, linear);
-  const puffEvery = Math.max(1, Math.ceil(floors / 12));
-  const panelZ = covered ? PANEL_Z_OUTSIDE : PANEL_Z;
-  for (let f = 1; f <= floors; f++) {
-    if (f % puffEvery !== 0 && f !== floors) continue;
-    c.at(at.cladding + f * floorTime, () => dust.puff(new THREE.Vector3((rng() - 0.5) * 2, baseY + f * floorHeight, 2.25), rng, 24, 0.5));
-  }
-  // Each lift lands as the plane reaches its band (see panelLifts).
-  panelLifts(floors, schedule).forEach(({ r0, r1, start, lands, passes }, i) => {
-    const bottom = baseY + r0 * floorHeight;
-    const panelTop = baseY + r1 * floorHeight;
-    const panelHeight = panelTop - bottom;
-    const center = new THREE.Vector3(0, (bottom + panelTop) / 2, panelZ);
-    pose = c.craneMove(stackPoint, center, start, lands - start, pose, travelY, {
-      pick: () => props.setPanel(i, stackPoint.x, stackPoint.y, stackPoint.z, panelHeight, 1),
-      carry: (point) => props.setPanel(i, point.x, point.y - panelHeight / 2, point.z, panelHeight, 1),
-      land: (from, t) => {
-        const y = from.y - panelHeight / 2;
-        props.setPanel(i, from.x + (center.x - from.x) * t, y + (center.y - y) * t, from.z + (center.z - from.z) * t, panelHeight, 1);
-      },
-    }, easeOutCubic);
-    // The plate fades out as the plane passes it, from wherever the plane is
-    // when it lands. Its own step, so a long jump still ends it hidden.
-    const from = Math.max(bottom, revealAt((lands - at.cladding) / d.cladding));
-    c.step(lands, passes - lands, (t) => {
-      const reveal = t >= 1 ? Infinity : revealAt((lands + t * (passes - lands) - at.cladding) / d.cladding);
-      const left = Math.min(1, Math.max(0, (panelTop - reveal) / Math.max(1e-6, panelTop - from)));
-      props.setPanel(i, center.x, center.y, center.z, panelHeight, left);
-    }, linear);
-  });
-
-  // Phase 6: roof and strike. The crane sets the cap with a small overshoot,
-  // or slides it in from beside the tower when blocks stand overhead; the
-  // scaffold comes down top to bottom and the guard rail goes.
-  const cap = props.cladding.cap;
-  const capLocal = (point: THREE.Vector3) => cap.position.set(point.x, point.y - baseY, point.z);
-  pose = c.craneMove(stackPoint, new THREE.Vector3(0, top, 0), at.roof - ROOF_LEAD, ROOF_LIFT, pose, travelY, {
-    pick: () => {
-      cap.visible = true;
-      capLocal(stackPoint);
-    },
-    carry: (point) => capLocal(point),
-    land: (from, t) => cap.position.set(from.x * (1 - t), from.y - baseY + (height + 0.002 - (from.y - baseY)) * t, from.z * (1 - t)),
-  }, covered ? easeOutCubic : easeOutBack, via);
-  c.step(strikeStart, 0.4, (t) => {
-    if (t >= 1) scaffold.hide();
-    else scaffold.revealTo(baseY + (height + 0.05) * (1 - t));
-  }, linear);
-  if (!first) c.step(strikeStart, 0.2, (t) => rail.show(baseY, 1 - t), easeInOutCubic);
 
   // Phase 7: cleanup. Machines back out, the crane folds away unless more work
   // is waiting, edges and label fade in, a last puff, and everyone leaves.
-  if (first) {
-    c.drive(excavator, new Path([HOMES.excavator, WORK_SPOTS.excavator]).reversed(), at.cleanup, d.cleanup, true);
-    c.drive(mixer, new Path([HOMES.mixer, WORK_SPOTS.mixer]).reversed(), at.cleanup, d.cleanup);
-  } else {
-    const hoistTop = Math.max(baseY + 1.2, towerTop);
-    c.step(at.cleanup + 0.1, d.cleanup - 0.1, (t) => hoist.setMast(SITE_Y, hoistTop, 1 - t), easeInOutCubic);
+  if (first && times.fadeIn) {
+    c.drive(excavator, new Path([HOMES.excavator, WORK_SPOTS.excavator]).reversed(), cleanup, cleanupLength, true);
+    c.drive(mixer, new Path([HOMES.mixer, WORK_SPOTS.mixer]).reversed(), cleanup, cleanupLength);
+  } else if (!first) {
+    c.step(cleanup + 0.1, cleanupLength - 0.1, (t) => hoist.setMast(SITE_Y, L.hoistTop, 1 - t), easeInOutCubic);
   }
   let retract = true;
-  c.at(at.cleanup, () => {
+  c.at(cleanup, () => {
     retract = !scene.moreQueued();
   });
-  const finalPose = pose;
-  c.step(at.cleanup, d.cleanup, (t) => {
+  c.step(cleanup, cleanupLength, (t) => {
     if (!retract) return;
-    const target = parked();
+    const target = times.parked();
     crane.setPose({
-      slew: finalPose.slew + angleBetween(finalPose.slew, target.slew) * t,
-      trolley: finalPose.trolley + (target.trolley - finalPose.trolley) * t,
-      hookY: finalPose.hookY + (target.hookY - finalPose.hookY) * t,
+      slew: pose.slew + angleBetween(pose.slew, target.slew) * t,
+      trolley: pose.trolley + (target.trolley - pose.trolley) * t,
+      hookY: pose.hookY + (target.hookY - pose.hookY) * t,
     });
   });
-  c.step(at.cleanup + 0.1, 0.3, (t) => {
-    props.setEdgeOpacity(0.5 * t);
-    claim.labelOpacity = HELD_LABEL_OPACITY + (1 - HELD_LABEL_OPACITY) * t;
-  });
-  c.at(at.cleanup, () => dust.puff(new THREE.Vector3(1.6, baseY + 0.05, 2.2), rng, 56, 1.0));
-  c.at(at.cleanup + 0.05, () => {
+  const claim = times.fadeIn;
+  if (claim) {
+    c.step(cleanup + 0.1, 0.3, (t) => {
+      props.setEdgeOpacity(0.5 * t);
+      claim.labelOpacity = HELD_LABEL_OPACITY + (1 - HELD_LABEL_OPACITY) * t;
+    });
+  }
+  c.at(cleanup, () => dust.puff(new THREE.Vector3(1.6, baseY + 0.05, 2.2), rng, 56, 1.0));
+  c.at(cleanup + 0.05, () => {
     props.tripod.visible = false;
   });
-  c.walk(surveyor, [stand, { x: stand.x, z: WORKER_GATE.z }, WORKER_GATE], at.cleanup, d.cleanup, { hide: true });
-  scaffolders.forEach((worker, j) => {
-    const [face, along] = faces[j]!;
-    if (worker === surveyor) return;
+  if (!L.solo) c.walk(surveyor, [stand, { x: stand.x, z: WORKER_GATE.z }, WORKER_GATE], cleanup, cleanupLength, { hide: true });
+  L.scaffolders.forEach((worker, j) => {
+    const [face, along] = SCAFFOLD_SPOTS[j]!;
+    if (worker === surveyor && !L.solo) return;
     if (aloft) {
       const spot = hoist.riderSpot(j);
-      c.walk(worker, [spot, { x: HOIST_WALK_X, z: spot.z }, { x: HOIST_WALK_X, z: WORKER_GATE.z }, WORKER_GATE], at.cleanup + 0.05 * j, d.cleanup - 0.05 * j, { hide: true });
+      c.walk(worker, [spot, { x: HOIST_WALK_X, z: spot.z }, { x: HOIST_WALK_X, z: WORKER_GATE.z }, WORKER_GATE], cleanup + 0.05 * j, cleanupLength - 0.05 * j, { hide: true });
       return;
     }
     const ground = groundSpot(face, along);
-    c.walk(worker, [ground, { x: ground.x, z: WORKER_GATE.z }, WORKER_GATE], at.cleanup + 0.05 * j, d.cleanup - 0.05 * j, { hide: true });
+    c.walk(worker, [ground, { x: ground.x, z: WORKER_GATE.z }, WORKER_GATE], cleanup + 0.05 * j, cleanupLength - 0.05 * j, { hide: true });
   });
+}
 
-  // Hold the final frame until the timeline's end so the job lasts its full length.
-  c.step(0, total, () => {}, linear);
+/**
+ * The finish of a block whose time is up: the crew on the top planks
+ * hammers until the crane brings the roof, then the scaffold strikes and
+ * everyone goes home. The job's copy of the block, already whole, stands in
+ * for the tower's own until the roof is on.
+ */
+export function finishTimeline(scene: JobScene, L: SiteLayout, kit: SiteKit): Timeline {
+  const { crew } = scene;
+  const { crane } = crew;
+  const { props, scaffold } = kit;
+  const c = new Choreography(crew);
+  const d = phaseSchedule(L.height, L.first).d;
+
+  props.setup(scene.token(L.block), L.baseY, L.height);
+  props.setReveal(Infinity);
+  props.setEdgeOpacity(0.5);
+  props.setColumns(L.top, L.top);
+
+  const mastFrom = crane.pivotY;
+  const mastTo = Math.max(mastFrom, L.towerTop + 3);
+  c.mast(mastFrom, mastTo, 0, 0.3);
+  const travelY = Math.min(mastTo - 0.45, Math.max(L.towerTop + 0.9, STACK.top + 1.2) + HOOK_HANG);
+  const stackPoint = new THREE.Vector3(STACK.x, STACK.top + 0.08, STACK.z);
+
+  const lift = 0;
+  const roof = lift + ROOF_LEAD;
+  const strike = L.covered ? roof : roof + 0.3;
+  const cleanup = roof + d.roof * 0.9;
+  const level = L.levels - 1;
+  // The crew hammers on the top planks until the strike.
+  L.scaffolders.forEach((worker, j) => {
+    const [face, along] = SCAFFOLD_SPOTS[j]!;
+    c.step(0, strike, (t) => {
+      const spot = scaffold.standPoint(face, level, along);
+      worker.show();
+      worker.place(spot.x, spot.y, spot.z, spot.heading);
+      worker.setAnimationAt('hammer', t * strike + 0.2 * j);
+    }, linear);
+  });
+  if (!L.solo) c.hold(L.surveyor, 'survey', 0, cleanup, { ...L.stand, y: SITE_Y });
+  addFinish(c, scene, L, kit, {
+    lift,
+    strike,
+    cleanup,
+    cleanupLength: d.cleanup,
+    level,
+    fadeIn: null,
+    parked: () => parkedPose(mastTo),
+    stackPoint,
+    travelY,
+  }, crane.currentPose);
+  c.step(0, cleanup + d.cleanup, () => {}, linear);
   return c.tl;
 }
 
@@ -491,7 +736,8 @@ function faceHeading(face: ScaffoldFace): number {
 
 /**
  * Reduced motion (spec 9.7): the block fades in over 0.25 s with no crew,
- * on a site that is already prepared.
+ * on a site that is already prepared. Also how a block that is already done
+ * appears when it is added: its time is up, so the crew has finished it.
  */
 export function fadeInJob(scene: JobScene, block: Block): Job {
   const { crew, holds } = scene;

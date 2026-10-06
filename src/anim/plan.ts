@@ -1,10 +1,17 @@
 import type { Block, BlockId, IsoDate, TimeRange } from '../core/model';
+import type { BuildState } from '../core/progress';
 import type { BlockChange, StoreEvent } from '../core/store';
 
 // Turns store changes into the jobs that animate them (spec 9.2). Times are
 // fixed (M2 decision 1): an edit never moves another block, so a deletion
 // leaves free time, and only a swap from Move earlier or Move later moves two
 // blocks at once. Free of three and the DOM, so it is unit tested.
+//
+// Blocks are built in real time, so what an edit shows depends on where its
+// block stands by the clock. A block whose time is up appears finished, the
+// block under way gets its crew, and a planned block is only a plan: edits to
+// it slide or fade, with no crew. The crane and the full crew animations are
+// for finished blocks.
 
 export interface BlockMove {
   /** The block before the change. */
@@ -15,18 +22,29 @@ export interface BlockMove {
 
 /** An undone deletion rebuilds at speed 3 (spec 12.6). */
 export const UNDO_SPEED = 3;
-/** A copied day builds in sequence at speed 3 (spec 12.8). */
-export const COPY_SPEED = 3;
-/** The sample day builds in sequence at speed 2.5 (spec 20). */
-export const SAMPLE_SPEED = 2.5;
+
+/** Where blocks of the viewed day stand by the clock. */
+export interface PlanClock {
+  stateOf(range: TimeRange): BuildState;
+  /** Minutes into the viewed day now, for the part of a block under way that stands. */
+  minutes: number;
+}
 
 export type JobPlan =
-  /** `sequence` builds play in turn, one after another, with one shared crew. */
-  | { kind: 'build'; block: Block; speed?: number; sequence?: boolean }
+  /** A block whose time is up appears, already finished. */
+  | { kind: 'appear'; block: Block; speed?: number }
+  /** The crew starts the block under way. */
+  | { kind: 'start'; block: Block }
+  /** The crew finishes a block an edit has made done. */
+  | { kind: 'finish'; block: Block }
+  /** A finished block, or the part of the block under way that stands, comes down. */
   | { kind: 'demolish'; block: Block }
-  | { kind: 'resize'; move: BlockMove }
+  /** A planned block's plan fades away. */
+  | { kind: 'vanish'; block: Block }
+  /** `calm` plays the plain version, for a planned block. */
+  | { kind: 'resize'; move: BlockMove; calm?: boolean }
   | { kind: 'relocate'; move: BlockMove; settles: BlockMove[] }
-  | { kind: 'settle'; moves: BlockMove[] };
+  | { kind: 'settle'; moves: BlockMove[]; calm?: boolean };
 
 export interface Plan {
   /** Finish whatever is playing at once before anything new is queued. */
@@ -70,14 +88,48 @@ function planMoves(moves: BlockMove[], selectedId: BlockId | null): JobPlan[] {
   return [{ kind: 'relocate', move: move!, settles }];
 }
 
+/** How a block that arrives shows: finished, started by the crew, or as a plan, which needs no job. */
+function arrival(block: Block, clock: PlanClock, speed?: number): JobPlan[] {
+  const state = clock.stateOf(block);
+  if (state === 'built') return [speed === undefined ? { kind: 'appear', block } : { kind: 'appear', block, speed }];
+  return state === 'building' ? [{ kind: 'start', block }] : [];
+}
+
+/**
+ * A block that leaves: a finished one is demolished; the block under way
+ * loses the part that stands, if a minute of it does; a plan fades.
+ */
+function departure(block: Block, clock: PlanClock): JobPlan[] {
+  const state = clock.stateOf(block);
+  if (state === 'built') return [{ kind: 'demolish', block }];
+  if (state === 'building' && clock.minutes - block.start >= 1) return [{ kind: 'demolish', block: { ...block, end: clock.minutes } }];
+  return [{ kind: 'vanish', block }];
+}
+
+/**
+ * A block whose times moved it from one part of the day to another. Out of
+ * the plan into the block under way, the crew starts it; out of the block
+ * under way into the finished part, the crew finishes it; from the plan into
+ * the finished part, it appears finished. Any other crossing shows at once,
+ * and the site for the block under way follows on its own.
+ */
+function change(move: BlockMove, clock: PlanClock): JobPlan[] {
+  const from = clock.stateOf(move.from);
+  const to = clock.stateOf(move.to);
+  if (from === 'planned' && to === 'building') return [{ kind: 'start', block: move.to }];
+  if (from === 'building' && to === 'built') return [{ kind: 'finish', block: move.to }];
+  if (from === 'planned' && to === 'built') return [{ kind: 'appear', block: move.to }];
+  return [];
+}
+
 /**
  * The jobs for a store event on the viewed day. Users' single edits animate;
- * an undone deletion of one block rebuilds it fast (spec 12.6); a copied day
- * and the sample day build block by block in a rapid sequence (spec 12.8 and
- * 20). Other bulk changes, such as imports, settings, and clearing a day,
- * finish whatever is playing and show at once.
+ * an undone deletion of one block comes back fast (spec 12.6). Bulk changes,
+ * such as copying a day, the sample day, imports, settings, and clearing a
+ * day, finish whatever is playing and show at once, except that the crew
+ * starts on a block whose time is under way.
  */
-export function planJobs(event: StoreEvent, viewedDate: IsoDate, selectedId: BlockId | null): Plan {
+export function planJobs(event: StoreEvent, viewedDate: IsoDate, selectedId: BlockId | null, clock: PlanClock): Plan {
   if (event.type !== 'blocks') return FINISH;
   if (event.date !== viewedDate) return NOTHING;
   const { changes, origin } = event;
@@ -85,21 +137,37 @@ export function planJobs(event: StoreEvent, viewedDate: IsoDate, selectedId: Blo
   const removed = changes.filter((c) => c.kind === 'removed');
 
   if (origin === 'undo') {
-    return added.length === 1 ? { finish: false, jobs: [{ kind: 'build', block: added[0]!.block, speed: UNDO_SPEED }] } : FINISH;
+    return added.length === 1 ? { finish: false, jobs: arrival(added[0]!.block, clock, UNDO_SPEED) } : FINISH;
   }
   if (origin === 'copy' || origin === 'sample') {
-    const speed = origin === 'copy' ? COPY_SPEED : SAMPLE_SPEED;
-    const blocks = added.map((c) => c.block).sort((a, b) => a.start - b.start);
-    return { finish: true, jobs: blocks.map((block) => ({ kind: 'build', block, speed, sequence: true })) };
+    const underWay = added.map((c) => c.block).filter((b) => clock.stateOf(b) === 'building');
+    return { finish: true, jobs: underWay.map((block) => ({ kind: 'start', block })) };
   }
   if (origin !== 'user') return FINISH;
 
-  // A new color applies at once, so anything mid-build finishes first.
-  const finish = changes.some((c) => c.kind === 'recategorized') || added.length > 1 || removed.length > 1;
+  // A new color applies at once, so anything mid-build finishes first, and
+  // so does anything at work on the block under way when it changes.
+  const touchesUnderWay = changes.some(
+    (c) => c.kind !== 'retitled' && (clock.stateOf(c.block) === 'building' || (c.previous !== undefined && clock.stateOf(c.previous) === 'building')),
+  );
+  const finish = changes.some((c) => c.kind === 'recategorized') || added.length > 1 || removed.length > 1 || touchesUnderWay;
   const jobs: JobPlan[] = [];
-  if (added.length === 1) jobs.push({ kind: 'build', block: added[0]!.block });
-  if (removed.length === 1) jobs.push({ kind: 'demolish', block: removed[0]!.block });
-  for (const move of movesOf(changes, 'resized')) jobs.push({ kind: 'resize', move });
-  jobs.push(...planMoves(movesOf(changes, 'moved'), selectedId));
+  if (added.length === 1) jobs.push(...arrival(added[0]!.block, clock));
+  if (removed.length === 1) jobs.push(...departure(removed[0]!.block, clock));
+  const stays = (move: BlockMove, state: BuildState) => clock.stateOf(move.from) === state && clock.stateOf(move.to) === state;
+  for (const move of movesOf(changes, 'resized')) {
+    if (stays(move, 'built')) jobs.push({ kind: 'resize', move });
+    else if (stays(move, 'planned')) jobs.push({ kind: 'resize', move, calm: true });
+    else jobs.push(...change(move, clock));
+  }
+
+  // Blocks that move within the finished part of the day animate together,
+  // as do plans; any other move on its own.
+  const moves = movesOf(changes, 'moved');
+  const finished = moves.filter((m) => stays(m, 'built'));
+  const planned = moves.filter((m) => stays(m, 'planned'));
+  jobs.push(...planMoves(finished, selectedId));
+  if (planned.length > 0) jobs.push({ kind: 'settle', moves: planned, calm: true });
+  for (const move of moves) if (!finished.includes(move) && !planned.includes(move)) jobs.push(...change(move, clock));
   return { finish, jobs };
 }

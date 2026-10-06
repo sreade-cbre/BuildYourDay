@@ -15,6 +15,7 @@ time order, with free time shown as hollow wireframe. The full design lives in
 | M3 | First build animation | Done |
 | M4 | Stacked builds and the other jobs | Done |
 | M5 | Living tower: now ring, weathering, idle orbit | Done |
+| After M5 | Blocks build in real time, while their time runs | Done |
 
 ## Requirements
 
@@ -30,8 +31,9 @@ npm run dev
 
 Then open http://localhost:5173. The app opens on today's date. In
 development, a first run with no saved data offers a "Load sample day" button
-on the plot; the crew builds its seven blocks one after another in under 15
-seconds.
+on the plot. Its seven blocks appear at once by the clock: the ones whose time
+is up stand finished, the crew starts on the one under way, and the rest are
+plans.
 
 | Script | What it does |
 |---|---|
@@ -52,15 +54,24 @@ and deleting a block leaves free time behind.
 
 - **Add a block** with Add block, the N key, a click on a gap (it prefills
   that free time, up to two hours), or a click on the plot or the top roof.
-- **Watch it build.** Every new block is built by a crew: survey, site prep,
-  foundation, frame, scaffold, cladding, roof, and cleanup, about 6 seconds
-  for an hour at speed 1. The first block of a day clears and pours the site;
-  later ones get a guard rail and a hoist ride up instead. Every edit has its
-  own animation: a resize extends or shrinks the block, a move slides it or
-  has the crane carry it, and Demolish brings in the wrecking ball. Adding
-  more while one plays hurries it along. Skip in the status chip or Escape
-  finishes everything at once, as do opening settings and changing days. With
-  reduced motion, each change is a quarter second fade or slide.
+- **Watch it build, in real time.** A block is built while its time runs.
+  Until then it is a see through plan in its category color. When its time
+  starts, the crew arrives: survey, site prep, foundation, frame, and
+  scaffold, a few seconds in all. Then the facade rises with the now ring
+  while the crew hammers on the scaffold at that height, climbing as it goes.
+  When the time is up, the roof goes on, the scaffold comes down, and the crew
+  goes home. The first block of a day clears and pours the site; later ones
+  get a guard rail and a hoist ride up instead. A block added when its time
+  is already up appears finished; one added partway through gets its crew,
+  who catch up with the time already gone.
+- **Edits animate too.** On finished blocks, a resize extends or shrinks the
+  block, a move slides it or has the crane carry it, and Demolish brings in
+  the wrecking ball, which takes down only the built part of the block under
+  way. Plans slide and fade, with no crew. Adding more while one plays hurries
+  it along. Skip in the status chip or Escape finishes everything at once, as
+  do opening settings and changing days. With reduced motion there is no
+  crew: each change is a quarter second fade or slide, and the block under
+  way fills in with the ring.
 - **Select** a block by clicking it or its label. Click empty space or press
   Escape to deselect. Up and Down move the selection through the day.
 - **Resize** a selected block by dragging its roof or base, by Shift and the
@@ -73,7 +84,8 @@ and deleting a block leaves free time behind.
 - **Rename and recategorize** in the inspector. Titles and times commit on
   Enter or when you leave the field.
 - **Demolish** with the inspector button or Delete. An Undo toast stays for
-  six seconds; Undo rebuilds the block at triple speed.
+  six seconds; Undo brings the block back by the clock, a finished one
+  fading in at triple speed.
 - **Change days** with the arrows beside the date, the [ and ] keys, or
   Today. The new day appears at once, and its blocks warm from pale to their
   colors, bottom to top, in a short sunrise.
@@ -81,11 +93,13 @@ and deleting a block leaves free time behind.
   tower, with a "now" card beside it. It moves every 30 seconds and when you
   come back to the tab, and is hidden before the day starts and after it
   ends. Blocks that are done fade to a paler, matte finish and their labels
-  say done; the block under way is paler only below the ring. This never
-  changes your plan, and other days are never weathered.
+  say done; the block under way says building. This never changes your plan,
+  and other days are never weathered: earlier days stand finished, later days
+  are plans.
 - **Leave it running.** After 20 seconds with no input the camera slowly
   circles the tower until you move the mouse, scroll, or press a key. It
-  waits while the crew works. If the app is open past midnight, a toast
+  waits while a job plays, though not for the crew at work on the block under
+  way. If the app is open past midnight, a toast
   offers the new day and the Today button returns, but the day you are
   viewing stays put.
 - **Highlight a category** by clicking it in the legend; click again or press
@@ -98,8 +112,8 @@ and deleting a block leaves free time behind.
 Plans and settings save to this browser's local storage under
 `timetower.save`. The menu exports a JSON file and imports one (replacing all
 data or merging in days you do not have), copies the previous planned day onto
-an empty day, and clears the current day. A copied day is built block by
-block at triple speed by one crew; an import appears without building. Files
+an empty day, and clears the current day. A copied day and an import appear
+at once, finished, under way, or planned by the clock. Files
 from a newer version of the app are refused. If the browser cannot save (in
 some private windows, or when storage is full), a "Not saving: storage
 unavailable" chip stays on screen; edits keep working for the session, and
@@ -132,8 +146,8 @@ and Cancel puts everything back.
 | Slot | 5, 10, 15, or 30 minutes. New edits snap to it. |
 | Time format | 12h or 24h. |
 | Categories | Up to 9, each with a name and one of nine brand colors. Removing one moves its blocks to the first category. |
-| Animation speed | 0.5x to 3x for every construction animation. At 2x a build takes half as long. Preview builds a one hour block on a plot beside the tower at the chosen speed, then clears it; Escape skips it. Copied days and undone deletions always build at 3x, and the sample day at 2.5x. |
-| Reduced motion | System, On, or Off. On turns every construction animation into a quarter second fade or slide, stops the idle orbit, and moves the now ring without gliding. |
+| Animation speed | 0.5x to 3x for every construction animation, such as a block's start and finish and the crew's work in between. The building itself always follows the clock. Preview builds a one hour block from start to finish on a plot beside the tower at the chosen speed, then clears it; Escape skips it. An undone deletion of a finished block always fades back in at 3x. |
+| Reduced motion | System, On, or Off. On turns every construction animation into a quarter second fade or slide with no crew, stops the idle orbit, and moves the now ring without gliding. |
 | Idle orbit | Slowly circles the tower after 20 seconds without input. |
 | Labels | Always, or only on hover. |
 | Weather past blocks | On today, blocks that are done fade to a paler, matte finish. |
@@ -146,12 +160,12 @@ and Cancel puts everything back.
 ```
 src/
   brand/tokens.ts   the only file allowed to contain hex colors
-  core/             pure logic: model, time, layout, store, rng (no three, no DOM)
+  core/             pure logic: model, time, layout, store, rng, build progress by the clock (no three, no DOM)
   scene/            three.js scene: SceneRoot, Ground, Tower, blocks, gaps, labels, now ring
   scene/crew/       workers, machines, crane, hoist, scaffold, rubble, dust, and site props
   ui/               HTML overlay
-  anim/             Timeline, Director, easing, paths, and the job planner (plan.ts)
-  anim/jobs/        build, extend, shrink, resize, demolish, relocate, settle, the speed preview, and their timing (schedule.ts)
+  anim/             Timeline, Director, easing, paths, the job planner (plan.ts), and the block under way (live.ts)
+  anim/jobs/        build, extend, shrink, resize, demolish, relocate, settle, vanish, the speed preview, and their timing (schedule.ts)
 tests/              Vitest unit tests for core logic, animation timing, and brand rules
 ```
 
@@ -176,3 +190,7 @@ From spec section 22.2. Run through it before closing a milestone.
 - Dark theme has no unreadable text.
 - Strict palette: screenshot a build mid-phase and confirm every visible color
   is in section 5.1 or 5.2.
+- Block under way: the facade meets the now ring, and the crew stands on the
+  planks at that height.
+- At a block's end the roof goes on and the crew leaves; at the next block's
+  start the crew arrives. Later blocks are plans until then.

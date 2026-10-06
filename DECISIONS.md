@@ -593,3 +593,104 @@ what was decided and why. Section numbers refer to `TIME_TOWER_SPEC.md`.
     while they are hidden. The first attempt stalled because headless Chrome
     on macOS repeats a synthetic key the page leaves unhandled thousands of
     times a second, so the script sends Escape only while a job plays.
+
+## After M5: Building in real time
+
+### The change
+
+1. **Blocks build while their time runs (your call, October 6, 2026).** A
+   block's build used to play in a few seconds when it was added. Now the
+   crew starts a block when its time starts, keeps building it until its
+   time is up, and is done then. This replaces spec 9.1's build of a few
+   seconds. The block still exists in data, with its label and totals, the
+   moment it is added.
+2. **Plans are see through.** A block whose time has not come is drawn in
+   its category color at 22% opacity with its edges and no roof, so the
+   whole plan still reads at a glance (spec 2). Earlier days are all built
+   and later days are all plans. The plot keeps its grass until the day's
+   first block starts, so a day of plans floats over grass with no slab.
+3. **The start and the finish play at normal speed; the middle follows the
+   clock.** When a block's time starts, the crew plays spec 9.4 phases 0
+   to 4 (survey, site prep, foundation, frame, scaffold), about 3.5 s for an
+   hour at speed 1. The facade then rises with the now ring, so what stands
+   is exactly the time gone, and the frame and plan show above it. When the
+   time is up, the crane sets the roof, the scaffold strikes, and the crew
+   goes home, about 1.2 s. The app wakes at each start and end instead of
+   waiting for its 30 second clock tick.
+4. **Only a start or end the app saw plays.** One the clock passed within 2
+   minutes of the last reading plays its start or finish. After a hidden
+   tab, a load, or a day change, the site simply stands as it now is.
+5. **While the time runs.** Up to three workers hammer on the planks at the
+   facade's level, each in their own rhythm at the usual cycle rather than
+   slowed to the block's length, and climb a level when the facade reaches
+   it. Each finished floor puffs dust. The surveyor stays at the tripod, the
+   machines and the crane wait at the depot, and no panels are delivered,
+   as in M4 decision 14. The guard rail and hoist stay up for a stacked block.
+6. **A second set of site pieces.** The block under way has its own
+   scaffold, guard rail, hoist, props, dust, and six workers, so a job on a
+   finished block, which uses the crew's set, never takes the live site
+   down. The crane and machines are shared; the start and the finish are
+   jobs in the Director's queue like any other, and the site keeps working
+   while other jobs play.
+
+### Edits by the clock
+
+7. **Adding.** A block whose time is up fades in finished, since the crew
+   is done with it (the reduced motion fade of spec 9.7). A block under way
+   gets its start, then the facade catches up with the time already gone,
+   floor by floor. A plan needs no job: it replaces the draft's ghost.
+8. **Deleting.** A finished block is demolished as before. For the block
+   under way, the site packs up at once and the wrecking ball takes down
+   the part that stands, if a minute of it does. A plan fades out over a
+   quarter second. The toast still says Demolished, like the button.
+9. **Resizing and moving.** Finished to finished animates as in M4. Plan to
+   plan slides plainly, however far, since a plan is not solid and needs no
+   crane. A plan that reaches the block under way gets its start; the block
+   under way cut short behind the time gets its finish; a plan moved into
+   the past fades in finished. Any other crossing shows at once and the
+   site follows, for example a done block stretched past the time stands
+   under way again with its scaffold up.
+10. **Plans are not solid.** Loads pass through plans, rubble never lands on
+    them, a block under plans is not "covered" (M4 decision 10), and the
+    first block to start on a day prepares the site even with plans around
+    it (M4 decision 7). The hoist and the crane's lifts stay just above what
+    is built. The parked crane still clears the whole tower, plans included.
+11. **Copied days and the sample day show at once.** Builds follow the
+    clock, so the rapid sequences of M5 decisions 8 to 10 are gone, and with
+    them the tighter phase overlaps. If a copied block is under way, the
+    crew starts it. Undo brings a deleted block back by the clock too: done
+    fades in at triple speed, under way gets its start, a plan reappears.
+
+### Look
+
+12. **The block under way is fresh, not weathered.** M5 drew it weathered
+    below the ring. Now the part below the ring is the new facade, in full
+    color, drawn as a shell like M3 decision 13; it weathers over 2 s once
+    its roof is on. A block an edit puts back under way drops that fade at
+    once. Its label adds "building", as done blocks add "done".
+13. **Reduced motion.** No crew works: the block under way still fills in
+    with the ring, and its start and finish change without animation.
+14. **Plans on the dark theme.** A plan in its own color at 22% vanishes
+    against the navy sky, so on the dark theme plans take their family's
+    light tint, with a stronger outline in the same tint. The light theme
+    draws a plan's outline like a finished block's.
+15. **The camera reframes for the new roof only.** Spec 9.5 moves the camera
+    when the new block's top is out of view. The build used the top of
+    everything standing, which with plans above would reframe every start.
+
+### Under the hood
+
+16. **Shadows from the outer faces.** A facade drawn as a shell shaded its
+    own outer faces in fine stripes once it stood for more than a moment.
+    Its shadows now come from back faces only, as for any one sided
+    material.
+17. **A calm frame rate.** The crew at work keeps the scene animating all
+    day, so when nothing else moves the live site runs at 30 frames a second.
+    Anything else moving, a job, the camera, or the idle orbit, brings back
+    the full rate.
+18. **Measured.** On an Apple M1 Pro in headless Chrome at 1600 × 1000, with
+    the GPU finishing each frame: the live site at 30 frames a second, 95th
+    percentile 3.7 ms. A scripted day from 6:50 to 18:05 in one minute
+    steps, with adds, a deletion and its undo, a demolition, and a plan
+    moved along the way, played every start and finish with no console
+    errors, and the geometry count held at 152 after the first builds.

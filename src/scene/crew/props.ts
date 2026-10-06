@@ -126,6 +126,9 @@ export class SiteProps {
     this.claddingBody.clipShadows = true;
     // Inner faces too, so the cut reads as a shell rather than a see-through box.
     this.claddingBody.side = THREE.DoubleSide;
+    // Shadows from the outer faces only, as for a one sided material, or the
+    // inner faces would shade the outer ones in fine stripes.
+    this.claddingBody.shadowSide = THREE.BackSide;
     this.claddingEdges = materials.blockEdges('navy').clone();
     this.claddingEdges.clippingPlanes = [this.clipTop, this.clipBase];
     this.fadeBody = materials.blockBody('navy').clone();

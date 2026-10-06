@@ -7,7 +7,7 @@ import { easeOutBack, easeOutCubic, linear } from '../easing';
 import type { BlockMove } from '../plan';
 import { endJob } from './build';
 import { Choreography } from './choreography';
-import { standingBlocks, titleOf, type JobScene } from './scene';
+import { solidBlocks, titleOf, type JobScene } from './scene';
 import { CALM_SECONDS, SETTLE_SECONDS } from './schedule';
 
 // Settle (spec 9.2): a block slides to its new height with a small overshoot
@@ -30,7 +30,7 @@ export function claimMove(scene: JobScene, move: BlockMove): Claim {
 /** Free height beyond a target pose in the direction of travel, up to the next block or the slab. */
 function roomPast(scene: JobScene, id: BlockId, to: BlockPose, up: boolean): number {
   let room = Infinity;
-  for (const block of standingBlocks(scene, id)) {
+  for (const block of solidBlocks(scene, id)) {
     const pose = scene.tower.poseFor(block);
     if (up && pose.baseY >= to.baseY + to.height - 1e-6) room = Math.min(room, pose.baseY - (to.baseY + to.height));
     if (!up && pose.baseY + pose.height <= to.baseY + 1e-6) room = Math.min(room, to.baseY - (pose.baseY + pose.height));

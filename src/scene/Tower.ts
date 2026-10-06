@@ -10,8 +10,9 @@ import {
   spanHeight,
 } from '../core/layout';
 import type { Block, BlockId, CategoryId, LabelMode, SwatchToken, TimeRange } from '../core/model';
+import { buildState, type BuildState, type Clock } from '../core/progress';
 import type { Store, StoreEvent } from '../core/store';
-import { formatDuration, formatTimeShort } from '../core/time';
+import { formatDuration, formatTimeShort, nowMinutes, todayIso } from '../core/time';
 import { easeInOutCubic } from '../anim/easing';
 import { BlockMesh } from './BlockMesh';
 import { Foundation } from './Foundation';
@@ -28,6 +29,10 @@ import type { LabelSpace } from './SceneRoot';
 // has claimed show as the job says (see holds.ts). While a drag or an unsaved
 // inspector edit is in progress, a ghost shows the new times and the block
 // stays put, so the job that follows starts from where the block stands.
+//
+// Blocks are built in real time: a block whose time has not come is a see
+// through plan, the block under way is built up to the now ring with its plan
+// above, and a block whose time is up stands finished.
 
 /** Gap between a block's right face and its label (spec section 8.5). */
 const LABEL_OFFSET = 0.4;
@@ -95,17 +100,24 @@ interface LabelPlan {
 
 const NO_DECOR: TowerDecor = { selectedId: null, hoveredId: null, hoveredGapStart: null, highlightedCategory: null };
 
-/** A block's weathering (spec 11.4): not yet done, done, or under way now. */
-type Weather = 'fresh' | 'past' | 'current';
+/**
+ * What a block shows by the clock, for weathering (spec 11.4): finished but
+ * not weathered, done and weathered, under way now, or still planned.
+ */
+type Weather = 'fresh' | 'past' | 'current' | 'planned';
 
 /** Seconds a block takes to cross-fade to weathered (spec 11.4). */
 const WEATHER_FADE_SECONDS = 2;
+/** Keeps the cut through the block under way off its base face. */
+const SPLIT_CLEARANCE = 0.004;
 /** The day change sunrise (spec 12.7): each block's fade and the whole sweep. */
 const SUNRISE_SECONDS = 0.4;
 const SUNRISE_FADE = 0.2;
 
 /** Materials that stand in for a block's shared ones during a fade. */
 interface Override {
+  /** A weathering fade ends early if its block is no longer done; the sunrise always plays out. */
+  kind: 'weather' | 'sunrise';
   body: THREE.Material;
   cap: THREE.Material;
   /** The part above the now ring, for the block under way. */
@@ -125,11 +137,12 @@ export class Tower {
    * has no labels, so a day's first label does not stall a frame compiling it.
    */
   private readonly keeper = new Label();
-  /**
-   * Minutes into the viewed day when it is today and weathering is on, else
-   * null. The block it runs through splits at the now ring's height.
-   */
-  private now: number | null = null;
+  /** Today and the minute, which decide what is planned, under way, and done. */
+  private clock: Clock = { today: todayIso(), minutes: nowMinutes() };
+  /** The now ring's height, where the block under way splits. */
+  private nowY = 0;
+  /** The block under way on the viewed day, drawn split, if any. */
+  private buildingId: BlockId | null = null;
   private readonly planeBelow = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0);
   private readonly planeAbove = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   private readonly splitBelow: THREE.MeshStandardMaterial;
@@ -187,11 +200,16 @@ export class Tower {
     this.keeper.setText({ title: ' ', detail: ' ' });
     this.keeper.sprite.visible = false;
 
-    // One block at a time runs through the current time, so one pair of
-    // clipped materials, recolored for it, draws its two parts.
-    this.splitBelow = materials.blockWeathered('navy').clone();
+    // One block at a time is under way, so one pair of clipped materials,
+    // recolored for it, draws its two parts: what stands, and the plan above.
+    this.splitBelow = materials.blockBody('navy').clone();
     this.splitBelow.clippingPlanes = [this.planeBelow];
-    this.splitAbove = materials.blockBody('navy').clone();
+    this.splitBelow.clipShadows = true;
+    // Inner faces too, so the cut reads as a building going up, not a see through box.
+    this.splitBelow.side = THREE.DoubleSide;
+    // Shadows as for a one sided material, so the inner faces never stripe the outer ones.
+    this.splitBelow.shadowSide = THREE.BackSide;
+    this.splitAbove = materials.blueprint('navy').clone();
     this.splitAbove.clippingPlanes = [this.planeAbove];
     // Never drawn; keeps both in the scene so the startup warm up compiles them.
     for (const material of [this.splitBelow, this.splitAbove]) {
@@ -238,17 +256,27 @@ export class Tower {
   }
 
   /**
-   * Sets the minute weathering follows (spec 11.4), or null when the viewed
-   * day is not today or weathering is off. With `fade`, blocks that this
+   * Sets today and the minute, which decide what is planned, under way, and
+   * done, and what is weathered (spec 11.4). With `fade`, blocks that this
    * makes done cross-fade over 2 s; without it, as after a day change or a
    * load, they show weathered at once.
    */
-  setNow(minutes: number | null, fade: boolean): void {
-    if (minutes === this.now) return;
-    this.now = minutes;
+  setClock(clock: Clock, fade: boolean): void {
+    if (clock.today === this.clock.today && clock.minutes === this.clock.minutes) return;
+    this.clock = { ...clock };
     this.quietWeather = !fade;
     this.sync();
     this.quietWeather = false;
+  }
+
+  /** Where a span of the viewed day stands by the clock. */
+  stateOf(range: TimeRange): BuildState {
+    return buildState(range, this.store.viewedDate, this.clock);
+  }
+
+  /** The minute the tower last showed, for the part of the block under way that stands. */
+  get clockMinutes(): number {
+    return this.clock.minutes;
   }
 
   /**
@@ -276,16 +304,35 @@ export class Tower {
     });
   }
 
-  /** Moves the line between weathered and fresh to a height, following the now ring. */
+  /** Moves the top of the block under way to a height, following the now ring. */
   setNowY(y: number): void {
+    this.nowY = y;
+    this.applySplit();
+  }
+
+  /** The now ring's height as last set. */
+  get nowHeight(): number {
+    return this.nowY;
+  }
+
+  /** Cuts the block under way where its job says, or at the now ring. */
+  private applySplit(): void {
+    const id = this.buildingId;
+    let y = (id ? this.holds.current(id)?.reveal : undefined) ?? this.nowY;
+    // Until the facade has started, the cut stays clear of the base, where
+    // a face lying on the cut would flicker.
+    const base = id ? this.views.get(id)?.mesh.baseY : undefined;
+    if (base !== undefined && y < base + SPLIT_CLEARANCE) y = base - SPLIT_CLEARANCE;
     this.planeBelow.constant = y;
     this.planeAbove.constant = -y;
   }
 
-  private weatherOf(block: Block, inside: boolean): Weather {
-    if (this.now === null || !inside) return 'fresh';
-    if (block.end <= this.now) return 'past';
-    return block.start < this.now ? 'current' : 'fresh';
+  private weatherOf(state: BuildState, inside: boolean): Weather {
+    if (!inside) return 'fresh';
+    if (state === 'planned') return 'planned';
+    if (state === 'building') return 'current';
+    const weathering = this.store.settings.weatherPastBlocks && this.store.viewedDate === this.clock.today;
+    return weathering ? 'past' : 'fresh';
   }
 
   /** Brings every mesh in line with the store's viewed day. */
@@ -304,6 +351,7 @@ export class Tower {
     let topEnd = -Infinity;
     this.topId = null;
     this.topYValue = 0;
+    this.buildingId = null;
 
     for (const block of blocks) {
       live.add(block.id);
@@ -327,7 +375,11 @@ export class Tower {
 
       const category = this.store.categoryFor(block);
       view.dimmed = highlightedCategory !== null && category.id !== highlightedCategory;
-      const weather = this.weatherOf(block, inside);
+      const state = this.stateOf(block);
+      const weather = this.weatherOf(state, inside);
+      if (weather === 'current') this.buildingId = block.id;
+      // A dimmed block under way is drawn whole, since two translucent parts
+      // would draw darker where they meet.
       const split = weather === 'current' && !view.dimmed;
       if (!split) view.mesh.clearSplit();
       view.mesh.setAppearance({
@@ -336,27 +388,29 @@ export class Tower {
         hovered: hoveredId === block.id,
         hatched: !inside,
         weathered: weather === 'past',
+        stage: state,
       });
       if (split) {
-        this.splitBelow.color.copy(weatheredColor(category.color));
-        this.splitAbove.color.copy(colorOf(category.color));
+        this.splitBelow.color.copy(colorOf(category.color));
+        this.splitAbove.color.copy(materials.blueprint(category.color).color);
         view.mesh.setSplit(this.splitBelow, this.splitAbove);
       }
+      // A block that is under way or planned again drops its weathering fade.
+      if (this.overrides.get(block.id)?.kind === 'weather' && weather !== 'past') this.dropOverride(block.id);
       const override = this.overrides.get(block.id);
       if (override) view.mesh.useMaterials(override.body, view.mesh.edges.material as THREE.Material, override.cap, override.upper);
-      // A block that becomes done while in view fades over 2 s, and so does
-      // one that was done by the time its build finished. One that was under
-      // way is already mostly weathered, so it changes without a fade, and
-      // blocks that arrive all at once, as from a load, need none.
+      // A block that becomes done while in view fades over 2 s, whether the
+      // crew just finished it or a job just showed it. Blocks that arrive all
+      // at once, as from a load, need no fade.
       if (this.holds.isHidden(block.id)) {
         this.weatherShown.set(block.id, 'hidden');
       } else {
         const before = this.weatherShown.get(block.id);
-        const fade = sameDay && !this.quietWeather && weather === 'past' && (before === 'fresh' || before === 'hidden');
+        const fade = sameDay && !this.quietWeather && weather === 'past' && before !== undefined && before !== 'past';
         if (fade && !view.dimmed) this.fadeToWeathered(view, category.color);
         this.weatherShown.set(block.id, weather);
       }
-      view.label.setText(this.labelText(block, inside, weather === 'past'));
+      view.label.setText(this.labelText(block, inside, weather === 'past', weather === 'current'));
       view.label.sprite.visible = this.labelMode === 'always' || block.id === hoveredId || block.id === selectedId;
 
       if (inside && block.end > topEnd) {
@@ -388,6 +442,7 @@ export class Tower {
    * before every frame, so a playing job only has to update its claim.
    */
   private applyClaims(): void {
+    this.applySplit();
     for (const view of this.views.values()) {
       const claim = this.holds.current(view.block.id);
       const pose = claim?.pose ?? view.home;
@@ -400,11 +455,14 @@ export class Tower {
     }
   }
 
-  /** The plot and slab follow the data unless a job owns the site. */
+  /**
+   * The plot and slab follow the data unless a job owns the site: the plot
+   * keeps its grass until the day's first block is started.
+   */
   private syncSite(blocks: readonly Block[]): void {
     const mode = this.holds.siteMode;
     if (mode === null) {
-      const built = blocks.length > 0;
+      const built = blocks.some((block) => this.stateOf(block) !== 'planned');
       this.foundation.root.visible = built;
       this.ground.setPrepared(built);
     } else if (mode === 'build') {
@@ -433,10 +491,12 @@ export class Tower {
     const from = [body.color.clone(), cap.color.clone()];
     const to = [weatheredColor(token), weatheredColor(darkVariant(token))];
     const fromRoughness = [body.roughness, cap.roughness];
-    this.overrides.set(id, { body, cap });
+    this.overrides.set(id, { kind: 'weather', body, cap });
     view.mesh.useMaterials(body, view.mesh.edges.material as THREE.Material, cap);
     let elapsed = 0;
     this.animate((dt) => {
+      // Dropped because the block is no longer done.
+      if (this.overrides.get(id)?.body !== body) return false;
       elapsed += dt;
       const t = Math.min(1, elapsed / WEATHER_FADE_SECONDS);
       [body, cap].forEach((material, i) => {
@@ -467,7 +527,7 @@ export class Tower {
       const parts = upper ? [body, cap, upper] : [body, cap];
       const targets = parts.map((material) => material.color.clone());
       for (const material of parts) material.color.copy(colorOf('slatePale'));
-      this.overrides.set(id, { body, cap, upper });
+      this.overrides.set(id, { kind: 'sunrise', body, cap, upper });
       view.mesh.useMaterials(body, view.mesh.edges.material as THREE.Material, cap, upper);
       fades.push({ id, materials: parts, targets, delay: (view.mesh.baseY / top) * (SUNRISE_SECONDS - SUNRISE_FADE) });
     }
@@ -489,16 +549,21 @@ export class Tower {
 
   /** Drops a block's stand-in materials and gives it its shared ones back. */
   private endOverride(id: BlockId): void {
+    if (this.dropOverride(id)) this.sync();
+  }
+
+  /** Frees a block's stand-in materials; the next sync gives it its shared ones. */
+  private dropOverride(id: BlockId): boolean {
     const override = this.overrides.get(id);
-    if (!override) return;
+    if (!override) return false;
     this.overrides.delete(id);
     override.body.dispose();
     override.cap.dispose();
     override.upper?.dispose();
-    this.sync();
+    return true;
   }
 
-  private labelText(block: Block, inside: boolean, done = false): LabelText {
+  private labelText(block: Block, inside: boolean, done = false, building = false): LabelText {
     const settings = this.store.settings;
     const range = `${formatTimeShort(block.start, settings)} to ${formatTimeShort(block.end, settings)}`;
     const parts = [range, formatDuration(block.end - block.start)];
@@ -507,6 +572,7 @@ export class Tower {
     if (!inside) parts.push('outside window');
     // Weathering is never color alone (spec 17).
     if (done) parts.push('done');
+    if (building) parts.push('building');
     return { title: block.title || 'Untitled', detail: parts.join(' · ') };
   }
 

@@ -55,9 +55,14 @@ export type EdgeVariant = 'normal' | 'hover' | 'dimmed';
 /** Opacity of blocks outside a legend highlight (spec 13.3). */
 export const DIMMED_OPACITY = 0.4;
 
+/** Opacity of a planned block's faces. */
+export const BLUEPRINT_OPACITY = 0.22;
+
 class MaterialLibrary {
   private readonly cache = new Map<string, THREE.Material>();
   private hatchTexture: THREE.CanvasTexture | null = null;
+  /** Plans are drawn lighter on the dark theme, where their own colors would vanish. */
+  private theme: 'light' | 'dark' = 'light';
 
   private shared<T extends THREE.Material>(key: string, create: () => T): T {
     const existing = this.cache.get(key);
@@ -105,6 +110,58 @@ class MaterialLibrary {
         ...(variant === 'dimmed' ? { transparent: true, opacity: DIMMED_OPACITY } : {}),
       }),
     );
+  }
+
+  /**
+   * A planned block, one whose time has not come: its category color, see
+   * through, so the plan reads as a volume still to be built. Above the now
+   * ring, the block under way is drawn the same way.
+   */
+  blueprint(token: SwatchToken, variant: BlockVariant = 'normal'): THREE.MeshStandardMaterial {
+    return this.shared(`blueprint:${token}:${variant}`, () =>
+      new THREE.MeshStandardMaterial({
+        color: this.blueprintColor(token),
+        roughness: 0.9,
+        metalness: 0,
+        transparent: true,
+        opacity: variant === 'dimmed' ? BLUEPRINT_OPACITY * DIMMED_OPACITY : BLUEPRINT_OPACITY,
+        depthWrite: false,
+      }),
+    );
+  }
+
+  /**
+   * A planned block's outline, and the outline of the block under way. On
+   * the light theme it matches a finished block's; on the dark theme it is
+   * the family's light tint, stronger, so the plan reads against the sky.
+   */
+  blueprintEdges(token: SwatchToken, variant: EdgeVariant = 'normal'): THREE.LineBasicMaterial {
+    return this.shared(`blueprint-edges:${token}:${variant}`, () => {
+      const material = new THREE.LineBasicMaterial({ transparent: true, toneMapped: false });
+      this.styleBlueprintEdges(material, token, variant);
+      return material;
+    });
+  }
+
+  private blueprintColor(token: SwatchToken): THREE.Color {
+    return colorOf(this.theme === 'dark' ? lightVariant(token) : token);
+  }
+
+  private styleBlueprintEdges(material: THREE.LineBasicMaterial, token: SwatchToken, variant: EdgeVariant): void {
+    const dark = this.theme === 'dark';
+    material.color.copy(colorOf(variant === 'hover' || dark ? lightVariant(token) : edgeToken(token)));
+    const opacity = variant === 'hover' ? 1 : dark ? 0.75 : 0.5;
+    material.opacity = variant === 'dimmed' ? opacity * DIMMED_OPACITY : opacity;
+  }
+
+  /** Recolors the plans for a theme. */
+  setTheme(theme: 'light' | 'dark'): void {
+    this.theme = theme;
+    for (const [key, material] of this.cache) {
+      const [kind, token, variant] = key.split(':') as [string, SwatchToken, string];
+      if (kind === 'blueprint') (material as THREE.MeshStandardMaterial).color.copy(this.blueprintColor(token));
+      if (kind === 'blueprint-edges') this.styleBlueprintEdges(material as THREE.LineBasicMaterial, token, variant as EdgeVariant);
+    }
   }
 
   /** A past block's roof cap, weathered like its faces. */
