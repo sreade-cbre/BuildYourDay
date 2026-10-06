@@ -66,7 +66,10 @@ and deleting a block leaves free time behind.
   scaffold goes up, the crane brings the facade panels band by band as the
   facade closes, the roof cap goes on, and the scaffold comes down with the
   crew, who head home as the time runs out. Open the app at any moment and
-  the site is where that moment puts it.
+  the site is where that moment puts it. Around it all is a fenced site with
+  an entrance, cabins, toilets, a skip, and a lighting tower; once the plot
+  is cleared, gravel roads, tyre tracks, and materials laid down at its
+  edges.
 - **Edits animate too.** On finished blocks, a resize extends or shrinks the
   block, a move slides it or has the crane carry it, and Demolish brings in
   the wrecking ball, which takes down only the facade that has closed on the
@@ -164,7 +167,7 @@ and Cancel puts everything back.
 src/
   brand/tokens.ts   the only file allowed to contain hex colors
   core/             pure logic: model, time, layout, store, rng, build progress by the clock (no three, no DOM)
-  scene/            three.js scene: SceneRoot, Ground, Tower, blocks, gaps, labels, now ring
+  scene/            three.js scene: SceneRoot, Ground, the site yard, Tower, blocks, gaps, labels, now ring
   scene/crew/       workers, machines, crane, hoist, scaffold, rubble, dust, and site props
   ui/               HTML overlay
   anim/             Timeline, Director, easing, paths, the job planner (plan.ts), and the block under way (live.ts, liveBuild.ts, sitePlan.ts)

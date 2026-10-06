@@ -725,17 +725,48 @@ what was decided and why. Section numbers refer to `TIME_TOWER_SPEC.md`.
     rises from its own base and the crew rides the hoist up to it. Its
     guard rail and poured floor sit at its base with nothing under them.
 
+### The site round the tower
+
+19. **A construction site at the base (your call, October 6, 2026).** The
+    plot and depot now sit inside a site, built in `src/scene/SiteYard.ts`
+    for the main site only, not the speed preview's side plot. Site set-up
+    is always there, on every day: a mesh fence round the plot and depot
+    with an entrance on the depot's front, its gates swung open to the road
+    and cones beside them; signs reading "Site entrance", "Site office", and
+    "Hard hats and hi-vis must be worn on site"; two stacked site cabins
+    with an outside stair at the back of the depot; two toilets by the gate;
+    a skip by the crane; and a lighting tower with its generator at the
+    plot's back corner. Once the plot has been worked it also has a gravel
+    ring road round the tower where the crew walks, a gravel haul road from
+    the depot to where the machines work, tyre tracks, a spoil heap, and
+    materials laid down along the plot's back and left edges, clear of the
+    ring road, the hoist, and the bulldozer's passes: pallets of blocks,
+    timber, cement, rebar, pipes, formwork, and a pallet at the bay where the
+    labourer drops loads. A day of plans keeps its grass and has none of
+    these.
+20. **The whole plot is cleared.** The bulldozer used to clear a strip
+    across the plot's middle. Now its front clears the whole
+    plot, as a site strips its topsoil, so the laydown stands on bare earth.
+21. **Signs are text, and cones follow the vests.** The signs are canvas
+    text, which spec 10 allows; there are no picture textures. Cones are
+    blue in the strict palette and hi-vis orange in accents mode, like the
+    workers' vests (spec 5.3).
+22. **One mesh per material.** The yard is built from a few shared shapes
+    and then merged into one mesh per material, so it costs 88 draw calls,
+    shadows included, rather than about 270. Measured as in decision 25:
+    95th percentile frame 6.2 ms with the yard and 5.6 ms without.
+
 ### Under the hood
 
-19. **Shadows from the outer faces.** A facade drawn as a shell shaded its
+23. **Shadows from the outer faces.** A facade drawn as a shell shaded its
     own outer faces in fine stripes once it stood for more than a moment.
     Its shadows now come from back faces only, as for any one sided
     material.
-20. **A calm frame rate.** The crew at work keeps the scene animating all
+24. **A calm frame rate.** The crew at work keeps the scene animating all
     day, so when nothing else moves the live site runs at 30 frames a second.
     Anything else moving, a job, the camera, or the idle orbit, brings back
     the full rate.
-21. **Measured.** On an Apple M1 Pro in headless Chrome at 1600 × 1000, with
+25. **Measured.** On an Apple M1 Pro in headless Chrome at 1600 × 1000, with
     the GPU finishing each frame: a 3 hour block mid cladding at 30 frames
     a second, 95th percentile 4.5 ms, of which working out the site took
     0.7 ms. A scripted day from 6:55 to 18:05 in 30 second steps, with a 15

@@ -359,8 +359,15 @@ class MaterialLibrary {
     return this.shared('vest', () => new THREE.MeshStandardMaterial({ color: colorOf('blue'), roughness: 0.8, metalness: 0 }));
   }
 
+  /** Site cones: blue in strict mode, hi-vis orange in accents mode, like the vests. */
+  hazard(): THREE.MeshStandardMaterial {
+    return this.shared('hazard', () => new THREE.MeshStandardMaterial({ color: colorOf('blue'), roughness: 0.7, metalness: 0 }));
+  }
+
   setPaletteMode(mode: 'strict' | 'accents'): void {
-    this.vest().color.copy(colorOf(mode === 'accents' ? 'hiVis' : 'blue'));
+    const accent = colorOf(mode === 'accents' ? 'hiVis' : 'blue');
+    this.vest().color.copy(accent);
+    this.hazard().color.copy(accent);
   }
 
   /** Number of shared materials, for the debug overlay. */

@@ -7,6 +7,7 @@ import { formatDateTitle } from '../core/time';
 import { FONT_HEADING, context2d, font } from './canvasText';
 import { PLOT_TOP_Y } from './Foundation';
 import { colorOf, materials } from './materials';
+import { SiteYard } from './SiteYard';
 
 // The ground, the plot the tower stands on, the depot pad, and the site sign
 // (spec section 8.2).
@@ -24,8 +25,8 @@ export const DEPOT_DEPTH = 8;
 export const DEPOT_TOP_Y = PLOT_TOP_Y - 0.02;
 const GROUND_SIZE = 200;
 const GRASS_COUNT = 2500;
-/** Half width of the strip the bulldozer clears across the plot. */
-export const CLEARED_HALF_WIDTH = 2.6;
+/** Half width of the strip the bulldozer clears across the plot: all of it, as a real site strips its topsoil. */
+export const CLEARED_HALF_WIDTH = PLOT_SIZE / 2;
 
 const SIGN_POST_HEIGHT = 1.4;
 const SIGN_BOARD_WIDTH = 2.0;
@@ -51,6 +52,8 @@ export class Ground {
   /** World x of each cleared blade, for the bulldozer's pass. */
   private readonly clearedX: number[] = [];
   private readonly sign: SiteSign | null;
+  /** The construction site round the plot: only the main site has one. */
+  private readonly yard: SiteYard | null;
   private prepared = false;
   /** True after a partial clear or fade, so setPrepared always settles the plot. */
   private partial = false;
@@ -100,6 +103,9 @@ export class Ground {
 
     this.root.add(createDepot());
 
+    this.yard = sign ? new SiteYard() : null;
+    if (this.yard) this.root.add(this.yard.root);
+
     this.sign = sign ? new SiteSign() : null;
     if (this.sign && sign) {
       this.sign.root.position.set(sign.x, PLOT_TOP_Y, sign.z);
@@ -136,6 +142,7 @@ export class Ground {
    * grass. A day with any block has a prepared site.
    */
   setPrepared(prepared: boolean): void {
+    this.yard?.setWorked(prepared);
     if (prepared === this.prepared && !this.partial) return;
     this.prepared = prepared;
     this.partial = false;
@@ -179,6 +186,8 @@ export class Ground {
   /** Plot top from grass (0) to bare earth (1), for site prep. */
   setPrepFade(t: number): void {
     this.partial = true;
+    // The roads and laydown go down once the plot is cleared.
+    this.yard?.setWorked(t >= 0.999);
     this.plotTopMaterial.color.copy(colorOf(this.grassToken())).lerp(colorOf('slatePale'), t);
   }
 
