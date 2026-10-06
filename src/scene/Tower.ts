@@ -143,8 +143,8 @@ export class Tower {
   private nowY = 0;
   /** The block under way on the viewed day, drawn split, if any. */
   private buildingId: BlockId | null = null;
-  /** How far the crew has got with the block under way: the facade's height, and whether the roof is on. */
-  private live: { id: BlockId; reveal: number; roof: boolean } | null = null;
+  /** How far the crew has got with the block under way: the facade's height, whether the roof is on, and what they are doing. */
+  private live: { id: BlockId; reveal: number; roof: boolean; activity: string } | null = null;
   private readonly planeBelow = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0);
   private readonly planeAbove = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   private readonly splitBelow: THREE.MeshStandardMaterial;
@@ -311,12 +311,15 @@ export class Tower {
 
   /**
    * Tells the tower how far the crew has got with the block under way: how
-   * high its facade has closed and whether its roof is on. Null when no crew
-   * is at work on it.
+   * high its facade has closed, whether its roof is on, and what the crew is
+   * doing, which its label says. Null when no crew is at work on it.
    */
-  setLive(id: BlockId | null, reveal = 0, roof = false): void {
-    this.live = id === null ? null : { id, reveal, roof };
-    this.applySplit();
+  setLive(id: BlockId | null, reveal = 0, roof = false, activity = 'building'): void {
+    const before = this.live;
+    this.live = id === null ? null : { id, reveal, roof, activity };
+    // A new trade, or a site set up or cleared, changes the label.
+    if (before?.id !== this.live?.id || before?.activity !== this.live?.activity) this.sync();
+    else this.applySplit();
   }
 
   /** Cuts the block under way where its facade has got to, or at the now ring when no crew is at work on it. */
@@ -579,7 +582,7 @@ export class Tower {
     if (!inside) parts.push('outside window');
     // Weathering is never color alone (spec 17).
     if (done) parts.push('done');
-    if (building) parts.push('building');
+    if (building) parts.push(this.live?.id === block.id ? this.live.activity : 'building');
     return { title: block.title || 'Untitled', detail: parts.join(' · ') };
   }
 

@@ -62,10 +62,12 @@ and deleting a block leaves free time behind.
   hauls the spoil, and the footings, rebar, and slab go in. A block on the
   tower gets a hoist, a guard rail on the roof below, and a floor pumped up
   and poured. Then the frame goes up floor by floor, the crane bringing each
-  floor's beams, with the crew bolting and climbing deck to deck. The
-  scaffold goes up, the crane brings the facade panels band by band as the
-  facade closes, the roof cap goes on, and the scaffold comes down with the
-  crew, who head home as the time runs out. Open the app at any moment and
+  floor's beams, with the crew bolting and climbing deck to deck and the
+  scaffold rising with them. A few floors behind, the crane brings the
+  facade panels band by band as the facade closes, so the block fills in
+  steadily through its time. The roof cap goes on, and the scaffold comes
+  down with the crew, who head home as the time runs out. The block's label
+  names the trade at work, such as framing or cladding. Open the app at any moment and
   the site is where that moment puts it. Around it all is a fenced site with
   an entrance, cabins, toilets, a skip, and a lighting tower; once the plot
   is cleared, gravel roads, tyre tracks, and materials laid down at its

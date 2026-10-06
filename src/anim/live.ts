@@ -130,6 +130,6 @@ export class LiveSite {
     const borrowed = this.host.borrowed();
     script.apply(t, { crane: !borrowed.crane, machines: !borrowed.machines }, this.previous);
     this.previous = t;
-    this.scene.tower.setLive(script.block.id, script.reveal(t), script.roofOn(t));
+    this.scene.tower.setLive(script.block.id, script.reveal(t), script.roofOn(t), script.activity(t));
   }
 }

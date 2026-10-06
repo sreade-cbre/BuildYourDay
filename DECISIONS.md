@@ -607,22 +607,31 @@ what was decided and why. Section numbers refer to `TIME_TOWER_SPEC.md`.
 2. **The whole job over the block's time (your call, October 6, 2026).** A
    first version played survey to scaffold in a few seconds at the start
    and the roof in a second at the end, with only hammering between. Now
-   the block's time is the job's programme, in shares of its length:
+   the block's time is the job's programme, in shares of its length. As on
+   a real tower the trades overlap, so the building rises the whole time:
+   groundworks are short, the scaffold climbs with the frame, and the facade
+   closes a few floors behind it. A second version ran the trades one after
+   another, which left the block looking like a plan for its first half,
+   so at the default zoom it seemed nothing was being built (your report,
+   October 6, 2026).
 
-   | First block of the day | Share | Stacked block | Share |
-   |---|---|---|---|
-   | Setting out | 6% | Setting out | 6% |
-   | Clearing | 8% | Mobilizing | 6% |
-   | Digging | 10% | Floor pour | 12% |
-   | Footings and slab | 12% | | |
-   | Frame | 24% | Frame | 28% |
-   | Scaffold | 7% | Scaffold | 8% |
-   | Cladding | 21% | Cladding | 25% |
-   | Roof | 5% | Roof | 6% |
-   | Strike | 7% | Strike | 9% |
+   | First block of the day | From | To | Stacked block | From | To |
+   |---|---|---|---|---|---|
+   | Setting out | 0% | 3% | Setting out | 0% | 3% |
+   | Clearing | 3% | 7% | Setting up | 3% | 6% |
+   | Digging | 7% | 12% | Floor pour | 6% | 12% |
+   | Footings and slab | 12% | 18% | | | |
+   | Frame, scaffold with it | 18% | 64% | Frame, scaffold with it | 12% | 62% |
+   | Cladding | 30% | 92% | Cladding | 28% | 92% |
+   | Roof | 92% | 95% | Roof | 92% | 95% |
+   | Strike | 95% | 100% | Strike | 95% | 100% |
 
-   The timing lives in `src/anim/sitePlan.ts`, away from three, so it is
-   unit tested.
+   A band of facade starts closing only once its floors are framed, so on a
+   block of a floor or two the cladding waits for the frame. Every crane
+   lift, beams, panels, and the roof cap, goes in one queue: a lift that
+   would start before the crane is back from the last waits for it. The
+   timing lives in `src/anim/sitePlan.ts`, away from three, so it is unit
+   tested.
 3. **What happens in each.** Setting out: the foreman sets up the tripod,
    the footprint outline draws, and a worker drives a flagged stake at each
    corner. Clearing: the bulldozer pushes across the plot in passes, blade
@@ -635,13 +644,15 @@ what was decided and why. Section numbers refer to `TIME_TOWER_SPEC.md`.
    and rides up, fixes the guard rail on the roof below, and screeds a floor
    the mixer pumps up a line beside the tower. Frame, a floor at a time:
    columns rise, the crane brings that floor's ring of beams, a deck goes
-   down on it, and the crew bolts up and climbs to the new deck. Scaffold:
-   the crew climbs down to the first lift and works up with it. Cladding:
-   back down, then for each band of floors the crane brings a panel, the
-   facade closes behind the scaffold, and the crew moves up a level. Roof:
-   two go up to fix the cap the crane sets. Strike: the scaffold comes down
-   with the crew on it, they ride the hoist or step down, and everyone,
-   foreman last, walks out before the time is up.
+   down on it, and two of the crew bolt up and climb to the new deck, the
+   scaffold rising with them. Cladding: for each band of floors the crane
+   brings a panel and the facade closes behind the scaffold; on a crew of
+   three or more the third starts cladding while the frame is still going
+   up, and the other two join once it is done, everyone moving up a level
+   as each band closes. Roof: two go up to fix the cap the crane sets.
+   Strike: the scaffold comes down with the crew on it, they ride the hoist
+   or step down, and everyone, foreman last, walks out before the time is
+   up.
 4. **A function of the clock.** Everything on the site is worked out from
    the time since the block started, so the site looks the same whether it
    has been watched all along or the app has just opened mid-block. Nothing
@@ -708,8 +719,9 @@ what was decided and why. Section numbers refer to `TIME_TOWER_SPEC.md`.
 14. **The block under way is fresh, not weathered.** M5 drew it weathered
     below the ring. Now the part that stands is the new facade, in full
     color; it weathers over 2 s once its time is up. A block an edit puts
-    back under way drops that fade at once. Its label adds "building", as
-    done blocks add "done".
+    back under way drops that fade at once. Its label says what the crew is
+    doing, such as "framing" or "cladding" (the frame leads while the two
+    overlap), as done blocks add "done".
 15. **Reduced motion.** No crew, machines, or crane: the building still goes
     up with the time, stage by stage, and what the crane would bring
     appears in place on time.

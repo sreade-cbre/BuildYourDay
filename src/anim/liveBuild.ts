@@ -500,6 +500,7 @@ export class SiteScript {
   /** Seconds the block lasts. */
   readonly seconds: number;
   readonly phases: plan.Phases;
+  private readonly schedule: plan.SiteSchedule;
   private readonly floorHeight: number;
   private readonly crewmen: Crewman[] = [];
   private readonly rigs: Rig[] = [];
@@ -539,10 +540,11 @@ export class SiteScript {
     this.floorHeight = pose.height / this.floors;
     this.levels = plan.levelsFor(this.floors);
     this.seconds = (block.end - block.start) * 60;
-    this.phases = plan.sitePhases(this.seconds, this.first);
-    this.frame = plan.frameSteps(this.phases, this.floors);
-    this.bands = plan.cladBands(this.phases, this.floors);
-    this.roofLands = plan.roofLands(this.phases);
+    this.schedule = plan.siteSchedule(this.seconds, this.first, this.floors, plan.LIFT_SECONDS / options.pace, plan.CRANE_RETURN_SECONDS / options.pace);
+    this.phases = this.schedule.phases;
+    this.frame = this.schedule.frame;
+    this.bands = this.schedule.bands;
+    this.roofLands = this.schedule.roofLands;
     this.rng = rngFromString(block.id);
     const jitter = (this.rng() - 0.5) * 0.1;
     this.tripod = { x: 2.45 + jitter, z: 2.45 - jitter };
@@ -756,14 +758,17 @@ export class SiteScript {
       const route = floating ? [{ x: -1.7, z: from.z }, spot] : [spot];
       man.walk(phases.frame.start, route, { y: this.standY(0), face: spot.heading, by: frame[0]!.lands });
     });
+    const { framers, cladder } = this.trades(up);
     frame.forEach((step, k) => {
       const climb = this.floorHeight / (plan.CLIMB_SPEED * this.options.pace);
-      up.forEach((man, j) => {
+      framers.forEach((man, j) => {
         const last = k === frame.length - 1;
         man.work(last ? step.end : step.end - climb, 'hammer', { offset: j * 0.21 });
         if (!last) man.climb(step.end - climb, this.standY(k + 1), step.end);
       });
     });
+    // The cladder fixes the first floor until the facade can start.
+    cladder?.work(this.bands[0]!.start - this.shiftSeconds(), 'hammer', { offset: 0.42 });
 
     // The ground crew arrives with the frame: a banksman for the crane's
     // picks and a labourer carrying to the bay, until the strike.
@@ -794,40 +799,64 @@ export class SiteScript {
     return this.kit.scaffold.standPoint(face, level, along);
   }
 
-  /** Scaffold, cladding, and roof. */
+  /**
+   * Who works which trade while the frame and the facade overlap: on a crew
+   * of three or more the third clads, a few floors behind the other two.
+   */
+  private trades(up: Crewman[]): { framers: Crewman[]; cladder: Crewman | null } {
+    return up.length >= 3 ? { framers: up.slice(0, 2), cladder: up[2]! } : { framers: up, cladder: null };
+  }
+
+  /** Seconds to allow a worker to move from a deck to the scaffold. */
+  private shiftSeconds(): number {
+    return Math.min(12 / this.options.pace, 0.02 * this.seconds);
+  }
+
+  /** From a deck to a scaffold level: to the face, climb, and out onto the plank. */
+  private toPlank(man: Crewman, j: number, level: number, at: number, by: number): void {
+    const plank = this.plank(j, level);
+    const inside = SCAFFOLD_SPOTS[j]![0] === 'front' ? { x: plank.x, z: 1.75 } : { x: -1.75, z: plank.z };
+    const third = (by - at) / 3;
+    man.walk(at, [inside], { by: at + third });
+    man.climb(at + third, plank.y, at + 2 * third);
+    man.walk(at + 2 * third, [{ x: plank.x, z: plank.z }], { face: plank.heading, by });
+  }
+
+  /** The band of facade under way at `t`, or the last. */
+  private bandAt(t: number): number {
+    const index = this.bands.findIndex((band) => t < band.end);
+    return index < 0 ? this.bands.length - 1 : index;
+  }
+
+  /**
+   * Cladding, band by band from the bottom, the scaffold rising with the
+   * frame, then the roof. The crew on the planks moves up a level as each
+   * band closes; the framers join them once the frame is done.
+   */
   private planEnvelope(up: Crewman[]): void {
     const { phases, levels, bands, top } = this;
-    const scaffold = phases.scaffold;
-    const rise = { start: plan.at(scaffold, 0.06), end: plan.at(scaffold, 0.9) };
-
-    // Down from the top deck to the first lift of scaffold.
-    up.forEach((man, j) => {
-      const plank = this.plank(j, 0);
-      const inside = SCAFFOLD_SPOTS[j]![0] === 'front' ? { x: plank.x, z: 1.75 } : { x: -1.75, z: plank.z };
-      man.walk(scaffold.start, [inside], { by: plan.at(scaffold, 0.02) });
-      man.climb(plan.at(scaffold, 0.02), plank.y, plan.at(scaffold, 0.06));
-      man.walk(plan.at(scaffold, 0.06), [{ x: plank.x, z: plank.z }], { face: plank.heading, by: plan.at(scaffold, 0.08) });
-    });
-    // Up with the scaffold, a level at a time, fixing as they go.
-    for (let level = 1; level < levels; level++) {
-      const reached = plan.at(rise, (level + 1) / levels);
-      up.forEach((man, j) => {
-        man.work(reached, 'hammer', { offset: j * 0.21 });
-        man.climb(reached, this.plank(j, level).y);
-      });
-    }
-    up.forEach((man, j) => man.work(phases.clad.start, 'hammer', { offset: j * 0.21 }));
-
-    // Cladding from the bottom: back down to the first level, then up a
-    // level as each band of facade closes.
-    up.forEach((man, j) => man.climb(phases.clad.start, this.plank(j, 0).y, plan.at(bands[0]!, 0.12)));
-    bands.forEach((band, b) => {
-      up.forEach((man, j) => {
+    const { framers, cladder } = this.trades(up);
+    const climb = (this.height / levels) / (plan.CLIMB_SPEED * this.options.pace);
+    const clad = (man: Crewman, j: number, from: number) => {
+      for (let b = from; b < bands.length; b++) {
+        const band = bands[b]!;
         const last = b === bands.length - 1;
-        const climb = (this.floorHeight * (this.floors / levels)) / (plan.CLIMB_SPEED * this.options.pace);
         man.work(last ? band.end : band.end - climb, 'hammer', { offset: j * 0.21 });
         if (!last) man.climb(band.end - climb, this.plank(j, b + 1).y, band.end);
-      });
+      }
+    };
+    if (cladder) {
+      const start = bands[0]!.start;
+      this.toPlank(cladder, 2, 0, start - this.shiftSeconds(), start);
+      clad(cladder, 2, 0);
+    }
+    const join = phases.frame.end;
+    const from = this.bandAt(join + this.shiftSeconds());
+    framers.forEach((man, j) => {
+      this.toPlank(man, j, from, join, join + this.shiftSeconds());
+      clad(man, j, from);
+    });
+    bands.forEach((band, b) => {
       this.puffs.push({ t: band.closes.end, at: new THREE.Vector3((this.rng() - 0.5) * 2, this.baseY + ((b + 1) * this.height) / levels, 2.25), count: 24, spread: 0.5 });
     });
 
@@ -1063,7 +1092,12 @@ export class SiteScript {
 
   /** How high the facade has closed at `t`, in world units. */
   reveal(t: number): number {
-    return this.baseY + this.height * plan.facadeShare(this.phases, this.floors, t);
+    return this.baseY + this.height * plan.facadeShare(this.schedule, t);
+  }
+
+  /** What the crew is doing at `t`, for the block's label. */
+  activity(t: number): string {
+    return plan.activity(this.schedule, t);
   }
 
   /** True once the roof cap is on. */
@@ -1263,8 +1297,8 @@ export class SiteScript {
       if (this.changed(`deck${ring}`, String(q(laid)))) props.setDeck(ring, y - DECK_THICKNESS, laid);
     });
 
-    // The scaffold: up during its phase, down during the strike.
-    const scaffoldRise = plan.progress({ start: plan.at(phases.scaffold, 0.06), end: plan.at(phases.scaffold, 0.9) }, t);
+    // The scaffold climbs with the frame and comes down during the strike.
+    const scaffoldRise = t < phases.frame.start ? 0 : Math.min(1, (columnTop - baseY + 0.05) / (height + 0.05));
     const scaffoldFall = plan.progress({ start: plan.at(phases.strike, 0.05), end: plan.at(phases.strike, 0.7) }, t);
     const scaffoldShare = scaffoldRise * (1 - scaffoldFall);
     if (this.changed('scaffold', String(q(scaffoldShare)))) {
