@@ -56,6 +56,11 @@ if $install; then
   apps="${TIMETOWER_APPS_DIR:-$HOME/Applications}"
   dest="$apps/$name.app"
   mkdir -p "$apps"
+  # One install at a time, so a build by hand and one by desktop/update.sh
+  # cannot interleave their renames.
+  lock="/tmp/timetower-install-$(id -u).lock"
+  for _ in $(seq 300); do mkdir "$lock" 2>/dev/null && break; sleep 0.1; done
+  trap 'rmdir "$lock" 2>/dev/null || true' EXIT
   # Moved in with two renames, so an open copy never finds itself half
   # replaced, and no second copy is left behind for Spotlight to offer.
   rm -rf "$out/replaced.app"
