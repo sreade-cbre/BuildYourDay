@@ -20,7 +20,7 @@ final class LocalServer: @unchecked Sendable {
   private let port: UInt16
   private let hosts: Set<String>
   private let queue = DispatchQueue(label: "timetower.server")
-  private var listener: NWListener?
+  private var listeners: [NWListener] = []
 
   init(root: URL, port: UInt16) {
     self.root = root.standardizedFileURL
@@ -28,37 +28,49 @@ final class LocalServer: @unchecked Sendable {
     hosts = ["localhost:\(port)", "127.0.0.1:\(port)", "[::1]:\(port)"]
   }
 
-  /// Calls back once listening, or with the reason it cannot.
+  /// Calls back once listening on both of this Mac's own addresses, or with
+  /// the reason it cannot. Bound to them rather than to every address, so
+  /// tools that list open ports show it as local only, and "localhost",
+  /// whichever address it means, always reaches this app.
   func start(_ done: @escaping @MainActor (Error?) -> Void) {
-    let parameters = NWParameters.tcp
-    parameters.requiredInterfaceType = .loopback
-    // Lets a quick quit and reopen bind while old connections wind down.
-    parameters.allowLocalEndpointReuse = true
-    let listener: NWListener
-    do {
-      listener = try NWListener(using: parameters, on: NWEndpoint.Port(rawValue: port)!)
-    } catch {
-      Task { @MainActor in done(error) }
-      return
-    }
+    var waiting = 2
     var reported = false
-    listener.stateUpdateHandler = { state in
-      let result: Error??
-      switch state {
-      case .ready: result = .some(nil)
-      case .failed(let error), .waiting(let error): result = .some(error)
-      default: result = nil
+    // Called on `queue`, once per address.
+    func report(_ error: Error?) {
+      guard !reported else { return }
+      if error == nil {
+        waiting -= 1
+        guard waiting == 0 else { return }
       }
-      guard let result, !reported else { return }
       reported = true
-      Task { @MainActor in done(result) }
+      Task { @MainActor in done(error) }
     }
-    listener.newConnectionHandler = { [self] connection in
-      connection.start(queue: queue)
-      receive(on: connection, buffer: Data())
+    for address in ["127.0.0.1", "::1"] {
+      let parameters = NWParameters.tcp
+      parameters.requiredLocalEndpoint = .hostPort(host: NWEndpoint.Host(address), port: NWEndpoint.Port(rawValue: port)!)
+      // Lets a quick quit and reopen bind while old connections wind down.
+      parameters.allowLocalEndpointReuse = true
+      let listener: NWListener
+      do {
+        listener = try NWListener(using: parameters)
+      } catch {
+        queue.async { report(error) }
+        continue
+      }
+      listener.stateUpdateHandler = { state in
+        switch state {
+        case .ready: report(nil)
+        case .failed(let error), .waiting(let error): report(error)
+        default: break
+        }
+      }
+      listener.newConnectionHandler = { [self] connection in
+        connection.start(queue: queue)
+        receive(on: connection, buffer: Data())
+      }
+      listener.start(queue: queue)
+      listeners.append(listener)
     }
-    listener.start(queue: queue)
-    self.listener = listener
   }
 
   private func receive(on connection: NWConnection, buffer: Data) {
@@ -208,8 +220,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     webView = WKWebView(frame: .zero, configuration: configuration)
     webView.navigationDelegate = self
     webView.uiDelegate = self
-    // Safari's Develop menu can inspect the page.
+    #if TESTING
+    // Only test builds open to Safari's Develop menu, which could read what
+    // the page stores.
     webView.isInspectable = true
+    #endif
     webView.pageZoom = defaults.object(forKey: "pageZoom") as? Double ?? 1
 
     window = NSWindow(

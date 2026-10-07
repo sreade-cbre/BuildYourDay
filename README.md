@@ -97,8 +97,8 @@ to keep it there. It needs Node and the Xcode command line tools
   Settings.
 - **How it works.** `desktop/TimeTower.swift` is a small AppKit and WebKit
   wrapper. A server inside the app hands the built page to WebKit on port
-  5199, for this Mac only. If another program holds that port, the app says
-  so and quits. Safari's Develop menu can inspect the page.
+  5199, listening only on this Mac's own addresses (127.0.0.1 and ::1). If
+  another program holds that port, the app says so and quits.
 - **Removing it.** Delete `~/Applications/Time Tower.app`. Its saved plans
   are in `~/Library/WebKit/io.github.sreade-cbre.timetower`.
 

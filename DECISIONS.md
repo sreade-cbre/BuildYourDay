@@ -1318,3 +1318,20 @@ read badly there, and the user agreed to undo them.
     that kills the whole process group of a git command could stop a build
     halfway, and that commit then waits for the next move of main or
     `bash desktop/update.sh`.
+22. **No inspector outside test builds.** Entry 6 opened the page to
+    Safari's Develop menu, which lets anyone at the unlocked Mac read what
+    the page stores, an Outlook sign-in among it once connected. Only
+    `-D TESTING` builds are inspectable now.
+23. **Listening on this Mac's own addresses.** Entry 2's listener took the
+    port on every address and refused anything not on the loopback
+    interface, which held, but tools that list open ports showed
+    `*:5199`, which an IT scan could take for a port open to the network.
+    The server now runs one listener on `127.0.0.1` and one on `::1`, so
+    they show as local only, and "localhost" reaches this app whichever
+    address it resolves to. Either one failing to bind brings up the alert.
+    Checked with the test copy: the port list showed only the two
+    addresses; both answered, as did `localhost`; the Mac's network
+    address got no answer; another Host still got a 403; the page
+    rendered with WebKit's own user agent; and another server holding the
+    port on `127.0.0.1`, `::1`, or all addresses brought up the alert
+    every time.
