@@ -413,13 +413,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
   }
 
   /// Quits, then opens the app again once this copy has let go of its port,
-  /// behind whatever the user is working in.
+  /// behind whatever the user is working in. For a moment after this copy
+  /// exits, Launch Services still lists it as running, and a plain open
+  /// then tries to wake it and gives up; so the helper waits a little, asks
+  /// for a new copy (-n), and tries again until one is running.
   private func reopen() {
     updateCheck?.invalidate()
     let helper = Process()
     helper.executableURL = URL(fileURLWithPath: "/bin/sh")
     helper.arguments = [
-      "-c", "while /bin/kill -0 \(getpid()) 2>/dev/null; do /bin/sleep 0.2; done; /usr/bin/open -g \"$0\"",
+      "-c",
+      """
+      while /bin/kill -0 \(getpid()) 2>/dev/null; do /bin/sleep 0.2; done
+      for attempt in 1 2 3 4 5; do
+        /bin/sleep 1
+        /usr/bin/open -g -n "$0"
+        /bin/sleep 2
+        /usr/bin/pgrep -qf "^$0/Contents/MacOS/" && exit 0
+      done
+      """,
       Bundle.main.bundlePath,
     ]
     do {

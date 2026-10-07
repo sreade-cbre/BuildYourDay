@@ -1335,3 +1335,14 @@ read badly there, and the user agreed to undo them.
     rendered with WebKit's own user agent; and another server holding the
     port on `127.0.0.1`, `::1`, or all addresses brought up the alert
     every time.
+24. **Reopening waits for Launch Services.** Rolling out entry 23 left the
+    app closed: the helper saw the old copy's process end and ran
+    `open -g` at once, but Launch Services still listed the old copy for a
+    few milliseconds, so it tried to wake it, got procNotFound, and opened
+    nothing. The 6:03 pm reopen had won the same race by luck. The helper
+    now waits a second, asks for a new copy with `open -n`, and tries up to
+    five times until one is running. Ten update cycles on the test copy
+    reopened every time, each serving the page within seconds, one copy at
+    a time, with VS Code left in front. Noticing a new build can take up
+    to a minute while the app sits in the background, since App Nap
+    stretches its 3 second check.
