@@ -1249,13 +1249,11 @@ installing the page from Chrome. Nothing in `src/` changed.
     where it goes, for tests.
 13. **About shows the commit,** with "with changes" for a build made from
     edits not yet committed, which answers whether the app is current.
-14. **Rebuilding on every change to main waits on the user.** A
-    reference-transaction git hook, which fires however main moves, was to
-    export the commit to a clean folder, run the tests, and install only if
-    they pass. Claude Code's permission check stopped the script that
-    installs the hook, as persistence, so that part is the user's call.
-    Until then, `npm run desktop` after a change, and the open app does the
-    rest.
+14. **Rebuilding on every change to main waited on the user.** Claude
+    Code's permission check stopped the script that installs the git hook,
+    as persistence, so it went back to the user, who then asked for it
+    outright (entries 16 to 19). Without it, `npm run desktop` after a
+    change, and the open app does the rest.
 15. **Checked with the test copy.** Started in the background with
     `open -g`, it left VS Code in front. A changed page stamp reloaded the
     page within one check, logged, in the same process. A changed app stamp
@@ -1263,3 +1261,41 @@ installing the page from Chrome. Nothing in `src/` changed.
     forward; then it quit, opened again, and served the page within
     seconds, with VS Code still in front. Two installs in a row into a
     scratch folder left one copy with a valid signature and nothing behind.
+
+### Rebuilding whenever main moves
+
+16. **A reference-transaction hook.** It fires however main moves (a
+    commit, a fast forward from a worktree, a pull, a rebase, a reset), and
+    is shared by every worktree, where post-commit and post-merge would miss
+    some of those. Git runs it for every ref change, so it stays a few lines
+    that read the refs, and for main start `desktop/update.sh` in the
+    background in a session of its own (through the system perl's setsid),
+    so nothing that tidies up after the git command stops a build. It adds
+    Node's folder to the path, since git started from an app may not have
+    it. `--enable` refuses to replace a hook it did not write.
+17. **Builds the commit, not the working tree.** Several sessions edit the
+    main checkout at once, so `update.sh` exports main's commit with
+    `git archive` into `desktop/build/auto/src`, links `node_modules`, runs
+    `npm test`, then `build.sh --install`, and marks the commit installed
+    only if both pass. A failure leaves the app alone and posts a
+    notification; the next move of main tries again. One build runs at a
+    time under a lock, and a move during a build leaves a note so it goes
+    round once more for whatever main is then. Only the build holding the
+    lock trims or writes the log, the last 3,000 lines of
+    `desktop/build/update.log`. `--status` compares main with the installed
+    stamp. `build.sh` takes a short lock around its renames, so a build by
+    hand and one from the hook cannot interleave.
+18. **Turned on in the user's repo** on October 6, 2026 with
+    `bash desktop/update.sh --enable`. The hook lives in `.git/hooks`, which
+    git does not version, so a fresh clone needs `--enable` again.
+19. **Checked in a throwaway clone** with installs pointed at a scratch
+    folder. A commit rebuilt and installed within about 15 seconds, the git
+    command returning at once. A commit with a failing test was refused and
+    the app kept the previous build. Two commits a second apart built one
+    after the other, the second queued. A commit on a side branch in a
+    worktree built nothing, and fast forwarding main to it built it. The
+    runs found two faults, fixed before this was committed: the install
+    lock's cleanup on exit failed under `set -e` and marked a good build as
+    failed, and a queued call trimmed the log while the running build still
+    wrote to the old file, losing its lines. `--disable`, the refusal to
+    replace another hook, and the usage text were checked too.

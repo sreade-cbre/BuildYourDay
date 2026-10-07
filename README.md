@@ -66,13 +66,21 @@ That builds `Time Tower.app` into `desktop/build` and moves it to
 to keep it there. It needs Node and the Xcode command line tools
 (`xcode-select --install`), nothing more.
 
-- **Updating.** Run `npm run desktop` again after the code changes. If Time
-  Tower is open, it switches to the new build by itself once you are in
-  another app, so it never reloads under you: the page reloads, or, when the
-  app's own code changed, the app quits and opens again in the background.
-  It waits while it shows a Microsoft sign-in page. About Time Tower shows
-  the commit the page was built from ("with changes" when the build had
-  edits not yet committed).
+- **Updating by itself.** With `bash desktop/update.sh --enable` (on in this
+  repo), every change to main rebuilds the app in the background, whoever
+  makes it and from whichever worktree: a git hook exports that commit to a
+  clean folder, runs the tests, and installs only if they pass, so edits
+  nobody has committed never ship. A failure leaves the app as it was and
+  shows a notification. Changes during a build queue for one more build.
+  `--status` shows main against what is installed and the last result,
+  `--disable` turns it off, and the log is `desktop/build/update.log`.
+  Without it, run `npm run desktop` after a change.
+- **Switching to a new build.** If Time Tower is open, it takes up a new
+  build once you are in another app, so it never reloads under you: the
+  page reloads, or, when the app's own code changed, the app quits and
+  opens again in the background. It waits while it shows a Microsoft
+  sign-in page. About Time Tower shows the commit the page was built from
+  ("with changes" when the build had edits not yet committed).
 - **Window menu.** Keep on top (Option Command T) floats the window above
   other apps. Show on every desktop keeps it on all Spaces. The window
   opens where you last left it.
