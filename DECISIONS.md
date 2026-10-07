@@ -1299,3 +1299,22 @@ installing the page from Chrome. Nothing in `src/` changed.
     failed, and a queued call trimmed the log while the running build still
     wrote to the old file, losing its lines. `--disable`, the refusal to
     replace another hook, and the usage text were checked too.
+
+### On a company Mac
+
+The user asked whether anything done was not good for an enterprise
+computer. Nothing weakened the Mac's security or left it, but two choices
+read badly there, and the user agreed to undo them.
+
+20. **The app no longer calls itself Safari.** Entry 7 added Safari's
+    version to the user agent so sign-in pages would not turn the app
+    away. Where a company limits sign-in to some browsers, that looks like
+    getting around the rule, so the app now sends WebKit's own user agent.
+    If company sign-in refuses the app, Outlook belongs in the browser.
+21. **The hook starts builds as a plain background job.** Entry 16 detached
+    them with perl's setsid, which security software can take for a
+    malware habit. A plain `nohup` job outlives the git command that
+    started it (checked before entry 16 and again here). The cost: a tool
+    that kills the whole process group of a git command could stop a build
+    halfway, and that commit then waits for the next move of main or
+    `bash desktop/update.sh`.

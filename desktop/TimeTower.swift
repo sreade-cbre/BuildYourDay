@@ -202,8 +202,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
   private func makeWindow() {
     let configuration = WKWebViewConfiguration()
     configuration.websiteDataStore = .default()
-    // Some sign-in pages turn away browsers they do not recognize.
-    configuration.applicationNameForUserAgent = "Version/26.0 Safari/605.1.15"
     #if TESTING
     configuration.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "testClick")
     #endif

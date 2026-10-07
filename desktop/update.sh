@@ -56,12 +56,8 @@ repo="\$(cd "\$(git rev-parse --git-common-dir)/.." && pwd)" || exit 0
 [ -f "\$repo/desktop/update.sh" ] || exit 0
 PATH="$node_path:\$PATH"
 export PATH
-# In a session of its own, so nothing that tidies up after git stops a build.
-if [ -x /usr/bin/perl ]; then
-  nohup /usr/bin/perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' /bin/bash "\$repo/desktop/update.sh" </dev/null >/dev/null 2>&1 &
-else
-  nohup /bin/bash "\$repo/desktop/update.sh" </dev/null >/dev/null 2>&1 &
-fi
+# A plain background job, which outlives the git command that started it.
+nohup /bin/bash "\$repo/desktop/update.sh" </dev/null >/dev/null 2>&1 &
 exit 0
 EOF
   chmod +x "$hook"
