@@ -1,8 +1,8 @@
 #!/bin/bash
 # Builds Time Tower.app, the web app in a Mac window of its own, into
-# desktop/build. With --install it also copies it to ~/Applications, which
-# is what npm run desktop does. Needs Node and the Xcode command line tools
-# (xcode-select --install), nothing else.
+# desktop/build. With --install it then moves it to ~/Applications (or
+# $TIMETOWER_APPS_DIR), which is what npm run desktop does. Needs Node and
+# the Xcode command line tools (xcode-select --install), nothing else.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -35,16 +35,35 @@ plutil -replace CFBundleShortVersionString -string "$version" "$app/Contents/Inf
 plutil -replace CFBundleVersion -string "$version" "$app/Contents/Info.plist"
 cp -R dist "$app/Contents/Resources/web"
 
+# Lets an open copy of the app tell when a newer build replaces it: a
+# fingerprint of the page (index.html names every asset by its hash), one of
+# the app's own code, and the commit.
+commit="${TIMETOWER_COMMIT:-}"
+if [[ -z "$commit" ]] && commit="$(git rev-parse --short HEAD 2>/dev/null)"; then
+  git diff --quiet HEAD -- || commit="$commit with changes"
+fi
+{
+  echo "page $(shasum -a 256 dist/index.html | cut -d ' ' -f 1)"
+  echo "app $(shasum -a 256 desktop/TimeTower.swift | cut -d ' ' -f 1)"
+  echo "commit $commit"
+} > "$app/Contents/Resources/build-stamp"
+
 # Signed ad hoc, which is enough for this Mac to run what it built itself.
 codesign --force --sign - "$app"
 echo "Built $app"
 
 if $install; then
-  mkdir -p "$HOME/Applications"
-  rm -rf "$HOME/Applications/$name.app"
-  ditto "$app" "$HOME/Applications/$name.app"
-  echo "Installed $HOME/Applications/$name.app"
-  if pgrep -qf "^$HOME/Applications/$name.app/Contents/MacOS/TimeTower"; then
-    echo "Time Tower is open, so quit it and open it again to get this build."
+  apps="${TIMETOWER_APPS_DIR:-$HOME/Applications}"
+  dest="$apps/$name.app"
+  mkdir -p "$apps"
+  # Moved in with two renames, so an open copy never finds itself half
+  # replaced, and no second copy is left behind for Spotlight to offer.
+  rm -rf "$out/replaced.app"
+  if [[ -e "$dest" ]]; then mv "$dest" "$out/replaced.app"; fi
+  mv "$app" "$dest"
+  rm -rf "$out/replaced.app"
+  echo "Installed $dest"
+  if pgrep -qf "^$dest/Contents/MacOS/TimeTower"; then
+    echo "Time Tower is open and switches to this build once you are in another app."
   fi
 fi

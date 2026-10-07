@@ -61,12 +61,18 @@ server to start.
 npm run desktop
 ```
 
-That builds `Time Tower.app` into `desktop/build` and copies it to
+That builds `Time Tower.app` into `desktop/build` and moves it to
 `~/Applications`, so it opens from Spotlight or Launchpad. Drag it to the Dock
 to keep it there. It needs Node and the Xcode command line tools
-(`xcode-select --install`), nothing more. Run it again after changing the
-app; if the app is open, quit it and open it again.
+(`xcode-select --install`), nothing more.
 
+- **Updating.** Run `npm run desktop` again after the code changes. If Time
+  Tower is open, it switches to the new build by itself once you are in
+  another app, so it never reloads under you: the page reloads, or, when the
+  app's own code changed, the app quits and opens again in the background.
+  It waits while it shows a Microsoft sign-in page. About Time Tower shows
+  the commit the page was built from ("with changes" when the build had
+  edits not yet committed).
 - **Window menu.** Keep on top (Option Command T) floats the window above
   other apps. Show on every desktop keeps it on all Spaces. The window
   opens where you last left it.

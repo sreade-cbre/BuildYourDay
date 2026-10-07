@@ -1228,3 +1228,38 @@ installing the page from Chrome. Nothing in `src/` changed.
     sideways scrolling. Not checked: the menus and panels by hand, Open at
     login, and Outlook sign-in inside the app, where company sign-in rules
     may treat the app's WebKit differently from a browser.
+
+### Picking up new builds
+
+11. **The open app takes up a new build by itself.** The user asked for main
+    to reach the app without steps. `build.sh` leaves a stamp in the app: a
+    hash of `index.html`, which names every asset by its content hash, a
+    hash of `TimeTower.swift`, and the commit. The open app reads it every
+    3 seconds and whenever it stops being the active app. A new page
+    reloads it; new app code quits it and opens it again with `open -g`,
+    behind whatever the user is in, once the old copy has let go of its
+    port. It acts only while the user is in another app, so nothing reloads
+    under the pointer or in the middle of an edit, and never while a
+    Microsoft sign-in page is showing. It logs to the `timetower`
+    subsystem.
+12. **Installing is a swap.** `build.sh --install` moves the new bundle in
+    with two renames instead of deleting and copying, so an open copy never
+    serves from a half copied folder, and no second copy stays in
+    `desktop/build` for Spotlight to offer. `TIMETOWER_APPS_DIR` changes
+    where it goes, for tests.
+13. **About shows the commit,** with "with changes" for a build made from
+    edits not yet committed, which answers whether the app is current.
+14. **Rebuilding on every change to main waits on the user.** A
+    reference-transaction git hook, which fires however main moves, was to
+    export the commit to a clean folder, run the tests, and install only if
+    they pass. Claude Code's permission check stopped the script that
+    installs the hook, as persistence, so that part is the user's call.
+    Until then, `npm run desktop` after a change, and the open app does the
+    rest.
+15. **Checked with the test copy.** Started in the background with
+    `open -g`, it left VS Code in front. A changed page stamp reloaded the
+    page within one check, logged, in the same process. A changed app stamp
+    while the test copy was the front app did nothing until VS Code came
+    forward; then it quit, opened again, and served the page within
+    seconds, with VS Code still in front. Two installs in a row into a
+    scratch folder left one copy with a valid signature and nothing behind.

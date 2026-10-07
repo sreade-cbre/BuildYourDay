@@ -5,8 +5,12 @@
 
 import AppKit
 import Network
+import os
 import ServiceManagement
 import WebKit
+
+/// Readable with: log show --predicate 'subsystem == "timetower"'
+let log = Logger(subsystem: "timetower", category: "app")
 
 // MARK: Local server
 
@@ -128,6 +132,34 @@ final class LocalServer: @unchecked Sendable {
   }
 }
 
+// MARK: Build stamp
+
+/// What desktop/build.sh leaves in the app: a fingerprint of the page, one
+/// of the app's own code, and the commit it was built from. Reading it again
+/// tells when a newer build has been installed over this one.
+struct BuildStamp {
+  var page = ""
+  var app = ""
+  var commit = ""
+
+  static func installed() -> BuildStamp? {
+    let file = Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/build-stamp")
+    guard let text = try? String(contentsOf: file, encoding: .utf8) else { return nil }
+    var stamp = BuildStamp()
+    for line in text.split(separator: "\n") {
+      let parts = line.split(separator: " ", maxSplits: 1).map(String.init)
+      guard parts.count == 2 else { continue }
+      switch parts[0] {
+      case "page": stamp.page = parts[1]
+      case "app": stamp.app = parts[1]
+      case "commit": stamp.commit = parts[1]
+      default: break
+      }
+    }
+    return stamp.page.isEmpty || stamp.app.isEmpty ? nil : stamp
+  }
+}
+
 // MARK: App
 
 @MainActor
@@ -138,6 +170,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
   private var server: LocalServer?
   private var window: NSWindow!
   private var webView: WKWebView!
+  /// The build the page on screen comes from.
+  private var showing = BuildStamp.installed()
+  private var updateCheck: Timer?
 
   private static let zoomSteps: [Double] = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2]
 
@@ -150,6 +185,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
       if let error { self.cannotServe(error) } else { self.goHome(nil) }
     }
     self.server = server
+    updateCheck = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
+      Task { @MainActor in self?.pickUpNewBuild() }
+    }
+    updateCheck?.tolerance = 1
+  }
+
+  func applicationDidResignActive(_ notification: Notification) {
+    pickUpNewBuild()
   }
 
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
@@ -236,7 +279,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     _ = menu("Time Tower", [
-      item("About Time Tower", #selector(NSApplication.orderFrontStandardAboutPanel(_:))),
+      item("About Time Tower", #selector(showAbout(_:))),
       .separator(),
       item("Open at login", #selector(toggleOpenAtLogin(_:))),
       .separator(),
@@ -293,6 +336,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     webView.load(URLRequest(url: home))
   }
 
+  /// The version, with the commit the page on screen was built from.
+  @objc func showAbout(_ sender: Any?) {
+    let commit = showing?.commit ?? ""
+    NSApp.orderFrontStandardAboutPanel(options: commit.isEmpty ? [:] : [.version: "built from \(commit)"])
+  }
+
   @objc func toggleKeepOnTop(_ sender: Any?) { keepOnTop.toggle() }
 
   @objc func toggleEveryDesktop(_ sender: Any?) { everyDesktop.toggle() }
@@ -327,6 +376,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
   private func setZoom(_ zoom: Double) {
     webView.pageZoom = zoom
     defaults.set(zoom, forKey: "pageZoom")
+  }
+
+  // MARK: Updates
+
+  /// Takes up a newer build installed over this one (desktop/update.sh does
+  /// that whenever main moves), but only while the user is in another app,
+  /// so it never reloads under them, and never in the middle of signing in.
+  private func pickUpNewBuild() {
+    guard !NSApp.isActive, let installed = BuildStamp.installed(), let showing else { return }
+    guard installed.page != showing.page || installed.app != showing.app else {
+      self.showing = installed
+      return
+    }
+    guard let url = webView.url, url.host == home.host, url.port == home.port else { return }
+    if installed.app != showing.app {
+      log.notice("A newer build is installed, reopening")
+      return reopen()
+    }
+    log.notice("A newer build is installed, reloading the page")
+    self.showing = installed
+    goHome(nil)
+  }
+
+  /// Quits, then opens the app again once this copy has let go of its port,
+  /// behind whatever the user is working in.
+  private func reopen() {
+    updateCheck?.invalidate()
+    let helper = Process()
+    helper.executableURL = URL(fileURLWithPath: "/bin/sh")
+    helper.arguments = [
+      "-c", "while /bin/kill -0 \(getpid()) 2>/dev/null; do /bin/sleep 0.2; done; /usr/bin/open -g \"$0\"",
+      Bundle.main.bundlePath,
+    ]
+    do {
+      try helper.run()
+      NSApp.terminate(nil)
+    } catch {
+      log.error("Could not reopen: \(error.localizedDescription, privacy: .public)")
+    }
   }
 
   // MARK: Page
