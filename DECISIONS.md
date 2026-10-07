@@ -1153,3 +1153,78 @@ only; the app still works offline when it is not connected.
     running out with the silent try, Reconnect, and Disconnect, 40 checks
     with no console errors, in both themes. Not yet run against Microsoft
     itself, which needs the app registration.
+
+## After M5: A Mac app
+
+On October 6, 2026 the user asked to make Time Tower a widget they can open
+that sits somewhere on their computer. Desktop and Notification Center
+widgets on macOS are still pictures and cannot run the 3D scene, so of two
+ways to give it a window of its own, the user chose a small Mac app over
+installing the page from Chrome. Nothing in `src/` changed.
+
+### The app
+
+1. **A Swift wrapper, no new packages.** `desktop/TimeTower.swift` is one
+   file of AppKit and WebKit, compiled by `swiftc` from the Xcode command
+   line tools. three stays the only runtime dependency; Electron would have
+   added a large one and Tauri a Rust toolchain. The page is the same
+   production build, copied into the app.
+2. **Served from inside the app at `http://localhost:5199/`.** Saved plans
+   belong to an origin, WebKit is unreliable with module scripts from file
+   URLs, and a custom URL scheme cannot be a redirect URI for a single-page
+   app in Entra ID, so a small server on the Network framework serves the
+   app's web folder on a fixed port. It answers GET and HEAD on the
+   loopback interface only, refuses Host headers other than its own (so a
+   page that points its own name at this Mac gets a 403), refuses paths
+   outside the folder, and sends no-cache. 5199 sits clear of Vite's 5173
+   and up and of preview's 4173. If the port is taken, the app says so and
+   quits rather than show another program's page.
+3. **Its own plans.** WebKit keeps the app's storage apart from Chrome's,
+   so plans move over once with Export JSON and Import JSON. Outlook needs
+   `http://localhost:5199/` added as a second redirect URI.
+4. **The window.** It opens 1100 by 760 and centered, then where it was last
+   left; it can shrink to 480 by 360. Keep on top (Option Command T) puts
+   it at the floating level, above other apps' windows. Show on every
+   desktop joins all Spaces. Zoom in, Zoom out, and Actual size scale the
+   page and are kept, which is how a small window fits a page designed for
+   1100 px. Closing the window quits the app.
+5. **Open at login** sits in the app menu, through SMAppService, and is off
+   until chosen.
+6. **What a browser does that WebKit leaves to the app.** An Edit menu, so
+   copy and paste work in fields. Export goes through a save panel that
+   starts in Downloads, Import through an open panel. Alerts and confirms
+   become sheets. Links that ask for a new window open in the default
+   browser. Reload (Command R) loads the page afresh, which is also the way
+   back from any sign-in page, and a crashed page reloads by itself.
+   Safari's Develop menu can inspect the page.
+7. **The user agent names Safari.** WebKit's bare user agent leaves out
+   Safari's version, and some sign-in pages turn away browsers they do not
+   recognize.
+8. **The icon is drawn at build time.** `desktop/MakeIcon.swift` draws
+   three built blocks on a lawn with the next block a see through plan, in
+   the standard macOS icon shape. Its colors come from `tokens.ts` through
+   Node, so hex values stay in that one file.
+9. **Signed ad hoc, installed to `~/Applications`.** `npm run desktop`
+   builds and copies it, with no Apple developer account: Gatekeeper does
+   not quarantine an app the Mac built itself. `bash desktop/build.sh`
+   builds without installing.
+
+### Checked
+
+10. **A test build drove the real app.** `swiftc -D TESTING` adds hooks
+    that run a script in the page, stand in for the save and open panels,
+    click with real mouse events, and save a snapshot; the test copy had
+    its own bundle id, storage, and port 5198. The server answered with the
+    right types, empty HEAD bodies, 404 for missing files, folders, and
+    `..` paths, 403 for another Host, 405 for POST, on IPv4 and IPv6, and
+    refused connections to the Mac's network address. WebGL2 rendered the
+    tower with no page errors. Export saved its file; Import, clicked with
+    real mouse events since WebKit opens the file picker only for the
+    user's own clicks, replaced the data with a five block day, which was
+    still there after a quit and relaunch seconds later. Python holding the
+    port, on 127.0.0.1 or on all addresses, brought up the alert instead of
+    its page. Keep on top set the floating window level, and off set the
+    normal one. A 640 by 520 window at 80% zoom fit the page without
+    sideways scrolling. Not checked: the menus and panels by hand, Open at
+    login, and Outlook sign-in inside the app, where company sign-in rules
+    may treat the app's WebKit differently from a browser.

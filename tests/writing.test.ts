@@ -1,10 +1,21 @@
 import { describe, expect, it } from 'vitest';
 
 // Writing rules from spec appendix C that apply to the whole repo: no em
-// dashes or en dashes in docs, tests, config, or the page shell.
+// dashes or en dashes in docs, tests, config, the page shell, or the Mac app.
 
 const files = import.meta.glob(
-  ['../*.md', '../*.html', '../*.ts', '../package.json', '../tsconfig.json', '../.gitignore', '../tests/**/*.ts'],
+  [
+    '../*.md',
+    '../*.html',
+    '../*.ts',
+    '../package.json',
+    '../tsconfig.json',
+    '../.gitignore',
+    '../tests/**/*.ts',
+    '../desktop/*.swift',
+    '../desktop/*.sh',
+    '../desktop/*.plist',
+  ],
   { query: '?raw', import: 'default', eager: true },
 ) as Record<string, string>;
 
@@ -13,7 +24,7 @@ const DASHES = new RegExp(`[${String.fromCharCode(0x2013)}${String.fromCharCode(
 
 describe('writing rules', () => {
   it('scans the docs, config, and tests', () => {
-    for (const path of ['../README.md', '../DECISIONS.md', '../TIME_TOWER_SPEC.md', '../index.html', './brand.test.ts']) {
+    for (const path of ['../README.md', '../DECISIONS.md', '../TIME_TOWER_SPEC.md', '../index.html', './brand.test.ts', '../desktop/TimeTower.swift']) {
       expect(Object.keys(files)).toContain(path);
     }
     const empty = Object.entries(files)

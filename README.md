@@ -44,10 +44,49 @@ plans.
 | `npm test` | Runs the unit tests once. |
 | `npm run test:watch` | Runs the unit tests on every change. |
 | `npm run typecheck` | Type checks without building. |
+| `npm run desktop` | Builds the Mac app and puts it in `~/Applications`. |
 
 The build has no network calls and no web fonts, so it works offline. The
 one exception is Outlook: once you connect it, the app talks to Microsoft
 sign-in and Microsoft Graph (see [Meetings from Outlook](#meetings-from-outlook)).
+
+## Mac app
+
+Time Tower can also run as an app of its own on a Mac, with a Dock icon and
+a window you can leave anywhere, kept above other windows if you like. It is
+the same page in a window of the Mac's own WebKit, with no browser and no
+server to start.
+
+```sh
+npm run desktop
+```
+
+That builds `Time Tower.app` into `desktop/build` and copies it to
+`~/Applications`, so it opens from Spotlight or Launchpad. Drag it to the Dock
+to keep it there. It needs Node and the Xcode command line tools
+(`xcode-select --install`), nothing more. Run it again after changing the
+app; if the app is open, quit it and open it again.
+
+- **Window menu.** Keep on top (Option Command T) floats the window above
+  other apps. Show on every desktop keeps it on all Spaces. The window
+  opens where you last left it.
+- **View menu.** Zoom in, Zoom out, and Actual size (Command =, Command -,
+  Command 0) scale the page, which helps it fit a small window. Reload
+  (Command R) loads the page afresh.
+- **Open at login**, in the Time Tower menu, starts it when you log in.
+- **Its own plans.** The app saves apart from your browser, so it starts
+  empty. To bring your plans over, use Export JSON in the browser, then
+  Import JSON in the app and choose Replace all data.
+- **Outlook.** The app's page lives at `http://localhost:5199/`, so add that
+  address as a second single-page application redirect URI on the app
+  registration (see [Setup, once](#setup-once)), then connect in the app's
+  Settings.
+- **How it works.** `desktop/TimeTower.swift` is a small AppKit and WebKit
+  wrapper. A server inside the app hands the built page to WebKit on port
+  5199, for this Mac only. If another program holds that port, the app says
+  so and quits. Safari's Develop menu can inspect the page.
+- **Removing it.** Delete `~/Applications/Time Tower.app`. Its saved plans
+  are in `~/Library/WebKit/io.github.sreade-cbre.timetower`.
 
 ## Using it
 
@@ -189,7 +228,8 @@ included, as blocks on the tower, and keep them up to date while it is open.
    Applications, App registrations, New registration. Name it Time Tower,
    choose accounts in this organizational directory only, and add a
    redirect URI with the platform **Single-page application** and the
-   address `http://localhost:5173/`.
+   address `http://localhost:5173/`. For the [Mac app](#mac-app), add
+   `http://localhost:5199/` too.
 2. Under API permissions, add Microsoft Graph, Delegated permissions,
    `Calendars.Read`. If it says admin consent is required, an admin of your
    organization needs to grant it.
@@ -253,6 +293,7 @@ src/
   anim/             Timeline, Director, easing, paths, the job planner (plan.ts), and the block under way (live.ts, liveBuild.ts, sitePlan.ts)
   anim/jobs/        build, extend, shrink, resize, demolish, relocate, settle, vanish, the speed preview, and their timing (schedule.ts)
 tests/              Vitest unit tests for core logic, animation timing, and brand rules
+desktop/            the Mac app: TimeTower.swift (window, menus, local server), MakeIcon.swift, build.sh, Info.plist
 ```
 
 ## Brand rules
